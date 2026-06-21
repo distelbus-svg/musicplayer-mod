@@ -1,9 +1,9 @@
+.DS_Store
 .gradle/
 build/
-.gradle/
-.DS_Store
+gradle-temp/
+gradle-9.5-temp/
 *.zip
-gradle-*-temp/
 deps.txt
 
 # Backports not yet published
