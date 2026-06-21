@@ -1,0 +1,13 @@
+.gradle/
+build/
+.gradle/
+.DS_Store
+*.zip
+gradle-*-temp/
+deps.txt
+
+# Backports not yet published
+Backports/
+
+# Old source root (moved to 26.1.2/)
+src/

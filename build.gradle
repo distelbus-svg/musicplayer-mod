@@ -1,0 +1,2 @@
+// Root build file — run `./gradlew build` to build all versions.
+// Each subproject (26.1.2, Backports/*) builds its own JAR.
