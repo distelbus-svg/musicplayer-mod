@@ -1,0 +1,23 @@
+pluginManagement {
+    repositories {
+        maven {
+            name = 'Fabric'
+            url = 'https://maven.fabricmc.net/'
+        }
+        gradlePluginPortal()
+        mavenCentral()
+    }
+}
+
+plugins {
+    id 'org.gradle.toolchains.foojay-resolver-convention' version '0.9.0'
+}
+
+rootProject.name = 'musicplayer-mod'
+
+include '26.1.2'
+include 'Backports:1.21.4'
+include 'Backports:1.20.1'
+include 'Backports:1.19.2'
+include 'Backports:1.18.2'
+include 'Backports:1.16.5'
