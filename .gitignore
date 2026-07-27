@@ -1,6 +1,7 @@
 .DS_Store
 .gradle/
 build/
+run/
 gradle-temp/
 gradle-9.5-temp/
 *.zip
@@ -10,4 +11,4 @@ deps.txt
 Backports/
 
 # Old source root (moved to 26.1.2/)
-src/
+/src/

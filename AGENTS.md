@@ -2,21 +2,23 @@
 
 ## Build (all versions)
 ```sh
-./gradlew build         # builds all 6 versions in parallel
+./gradlew build         # builds all versions in parallel
 ```
 
-Multi-project structure: `./gradlew :26.1.2:build` or `./gradlew :Backports:1.21.4:build` for individual versions.
+Multi-project structure: `./gradlew :26.2:build` or `./gradlew :Backports:1.21.4:build` for individual versions.
 
 JARs are output to each subproject's `build/libs/` directory:
+- `26.2/build/libs/`
 - `26.1.2/build/libs/`
 - `Backports/*/build/libs/`
 
 ## Syncing source across versions
-Use `sync-source.sh` to copy a file from 26.1.2 to all backports that already have it:
+Use `sync-source.sh` to copy a file from 26.2 to all other versions that already have it:
 ```sh
 ./sync-source.sh src/main/java/com/musicplayer/AudioEngine.java
 ```
-Only copies to backports where the target file already exists. To add a new file to a backport, create it manually first.
+Only copies to versions where the target file already exists. To add a new file, create it manually first.
+**Note:** 26.1.2 uses a different screen API (`Minecraft.screen` / `Minecraft.setScreen`) vs 26.2 (`Minecraft.gui.screen()` / `Minecraft.gui.setScreen`), so files with screen-related calls may need manual adjustment after sync.
 
 ## Volume fix (cross-version)
 Three changes needed in each backport:
@@ -24,12 +26,13 @@ Three changes needed in each backport:
 2. **SoundtrackStateManager.tick()** — when `active && !confirmedActive`, call `soundExecutor.setVolume(manualInstance, volume)` if `volume < 1.0f`
 3. **MusicPlayerManager()** — `SoundtrackStateManager.getInstance().setVolume(config.getVolume());` in constructor
 
-See `26.1.2` for reference implementation. Backports 1.21.4, 1.20.1, 1.19.2, 1.16.5 share the same PlaybackSlot-based AudioEngine. 1.18.2 has a simpler engine and different SSM.
+See `26.2` for reference implementation. Backports 1.21.4, 1.20.1, 1.19.2, 1.16.5 share the same PlaybackSlot-based AudioEngine. 1.18.2 has a simpler engine and different SSM.
 
 ## Project Structure
-- `26.1.2/` — latest Minecraft version (unobfuscated, `net.fabricmc.fabric-loom`)
+- `26.2/` — latest Minecraft version (unobfuscated, `net.fabricmc.fabric-loom`)
+- `26.1.2/` — previous Minecraft version (unobfuscated, `net.fabricmc.fabric-loom`)
 - `Backports/*/` — each backport version (uses `net.fabricmc.fabric-loom-remap`)
-- `sync-source.sh` — copy a source file from 26.1.2 to matching backport files
+- `sync-source.sh` — copy a source file from 26.2 to matching files in other versions
 - `reference/` — reference mods (overtune-1.0.0.jar), icon.png
 - Config lives at `.minecraft/config/musicplayer.json`
 - Album art cache at `.minecraft/config/musicplayer/albumart/`
@@ -41,6 +44,40 @@ See `26.1.2` for reference implementation. Backports 1.21.4, 1.20.1, 1.19.2, 1.1
 - **UI**: Screen-based GUI (`MusicPlayerScreen`), HudElement overlay for notifications/visualizer/mini-player (`HudElementRegistry.addLast(id, this::render)`)
 - **Mixin config**: `musicplayer.mixins.json` in `com.musicplayer.mixin` package
 - **Theme system**: `ColorTheme` record with 5 presets, applied via `ColorTheme.get(themeId)`
+
+## Fixed Bugs - Version: 1.0.0
+
+### Settings Screen fixes (Jun 2026)
+- **Search bar loses focus on keystroke**: `rebuildWidgets()` in the search `setResponder` destroyed ALL widgets (including the search box) on every keystroke, causing focus loss. Replaced with `updateFolderWidgets()` which only recreates folder-related widgets without touching the search box.
+- **Scroll exceeds content**: `totalContentHeight` was a static value computed once in `init()` and didn't account for collapsed categories. Replaced with `computeVisibleContentHeight()` which dynamically calculates visible content height based on expanded categories and active search filter.
+- **Scroll direction inverted**: `-scrollYAmt` in `mouseScrolled` inverted macOS natural scrolling. Removed the negation (`scrollYAmt` only).
+- **Cannot drag scrollbar**: Added `draggingScrollbar` flag, `scrollbarDragStartY`/`scrollbarDragStartScroll` tracking, and thumb-drag logic in `mouseClicked`/`mouseDragged`/`mouseReleased`.
+
+### Prism instance mapping (for deployment)
+- 26.2 → `Fabulously Optimized(7)` (uses `minecraft.gui.setScreen`)
+- 26.1.2 → `Fabulously Optimized` (uses `minecraft.setScreen`)
+- 1.21.11 → `Fabulously Optimized(1)` (uses `minecraft.setScreen`, MouseButtonEvent)
+- 1.21.4 → `Fabulously Optimized(2)` (uses `minecraft.setScreen`, mouseClicked(double,double,int))
+- 1.20.1 → `Fabulously Optimized(3)` (GuiGraphics, mouseScrolled 3-param)
+- 1.19.2 → `Fabulously Optimized(4)` (PoseStack, old Button constructor)
+- 1.18.2 → `Fabulously Optimized(5)` (PoseStack, TextComponent)
+- 1.16.5 → `Fabulously Optimized(6)` (PoseStack, addButton, TextFieldWidget)
+
+## Sync-source notes
+After running `sync-source.sh`, you MUST adapt each backport's source files — the 26.2 API differs significantly from older versions. Common adaptations:
+- `GuiGraphicsExtractor` → `GuiGraphics` (1.21.x) or `PoseStack` (≤1.20.1)
+- `extractRenderState` → `render`
+- `gui.setScreen` → `minecraft.setScreen`
+- `MouseButtonEvent` → `mouseClicked(double,double,int)` etc.
+- `graphics.text(...)` → `graphics.drawString(...)` (1.21.x) or `font.draw(matrixStack, ...)` (≤1.20.1)
+- `graphics.fill(...)` → `fill(matrixStack, ...)` (≤1.20.1)
+- `graphics.centeredText(...)` → manual centering
+- `Button.builder(...)` → `new Button(x,y,w,h,text,handler)` (≤1.19.2)
+- `Component.literal(...)` → `new TextComponent(...)` (≤1.18.2)
+- `addRenderableWidget(...)` → `addButton(...)` (1.16.5)
+- `removeWidget(...)` → `children.remove(...)` (1.16.5/1.18.2)
+- `mouseScrolled(double,double,double,double)` → `mouseScrolled(double,double,double)` (≤1.20.1)
+- `EditBox` → `TextFieldWidget` + different imports (1.16.5)
 
 ## Fixed Bugs
 - **Game freeze on Creator (Music Box) / Comforting Memories**: Root cause was `NotificationManager.renderPanel()` rendering `♪` (U+266A), which triggered a Minecraft font fallback deadlock on macOS. Fixed by removing Unicode special characters and using char-count text truncation instead of `font.width()` calls. The freeze was never in the sound engine.
