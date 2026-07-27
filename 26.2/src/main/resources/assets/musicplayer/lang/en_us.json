@@ -1,0 +1,10 @@
+{
+  "key.category.musicplayer.main": "Music Player",
+  "key.musicplayer.open_gui": "Open Music Player",
+  "key.musicplayer.play_pause": "Play / Pause",
+  "key.musicplayer.next_track": "Next Track",
+  "key.musicplayer.previous_track": "Previous Track",
+  "key.musicplayer.volume_up": "Volume Up",
+  "key.musicplayer.volume_down": "Volume Down",
+  "key.musicplayer.custom_volume": "Set Custom Volume"
+}

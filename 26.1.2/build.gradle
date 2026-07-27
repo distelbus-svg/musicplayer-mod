@@ -2,12 +2,14 @@ plugins {
     id 'net.fabricmc.fabric-loom' version "${loom_version}"
 }
 
-version = rootProject.version
+version = project.mod_version
 group = rootProject.group
 base.archivesName = rootProject.archives_base_name
 
 loom {
-    // Minecraft 26.1.2 ships unobfuscated — no mappings needed
+    runConfigs.client {
+        programArgs "--gameDir", "/Volumes/Samsung/Dokumente/Prism/Fabulously Optimized"
+    }
 }
 
 repositories {
