@@ -43,6 +43,12 @@ public class MusicSettingsScreen extends Screen {
     private String hoveredTooltip = null;
     private int scrollY = 0;
 
+    // Double-click to type slider values
+    private String typingSliderId = null;
+    private String typingBuffer = "";
+    private String lastSliderClickId = null;
+    private long lastSliderClickTime = 0;
+
     private enum SettingType { FOLDER, SLIDER_FLOAT, SLIDER_INT, TOGGLE, CYCLE, ACTION }
 
     private record SettingDef(String id, String label, String category, String tooltip, int y, int height, SettingType type) {}
@@ -183,6 +189,7 @@ public class MusicSettingsScreen extends Screen {
         y = addCategorySettings("Display", y, List.of(
             new SettingDef("nowPlayingStyle", "Style", "Display", "Now-playing notification style: Widget, Above Hotbar, or Off", 0, 22, SettingType.CYCLE),
             new SettingDef("showNowPlayingToast", "Toast", "Display", "Show a toast notification when a new song starts", 0, 22, SettingType.TOGGLE),
+            new SettingDef("songEntryHeight", "Row Height", "Display", "Height of each song row in the list (0 = auto)", 0, 22, SettingType.SLIDER_INT),
             new SettingDef("visualizerEnabled", "Visualizer", "Display", "Show a live audio visualizer when music is playing", 0, 22, SettingType.TOGGLE),
             new SettingDef("miniPlayerEnabled", "Mini Player", "Display", "Show a movable mini player overlay with album art and controls", 0, 22, SettingType.TOGGLE),
             new SettingDef("miniPlayerStyle", "MP Style", "Display", "Mini player style: Big (current) or Compact", 0, 22, SettingType.CYCLE),
@@ -208,6 +215,7 @@ public class MusicSettingsScreen extends Screen {
 
         y = addCategorySettings("Extras", y, List.of(
             new SettingDef("listeningTime", "Listening Time", "Extras", "View listening time statistics per song", 0, 22, SettingType.ACTION),
+            new SettingDef("queuePersistence", "Save Queue", "Extras", "Save the current queue (song, position) across game restarts", 0, 22, SettingType.TOGGLE),
             new SettingDef("debugLogs", "Debug Logs", "Extras", "Enable detailed logging to debug issues", 0, 22, SettingType.TOGGLE)
         ));
     }
@@ -268,6 +276,7 @@ public class MusicSettingsScreen extends Screen {
             case "visualizerEnabled" -> config.isVisualizerEnabled();
             case "miniPlayerEnabled" -> config.isMiniPlayerEnabled();
             case "debugLogs" -> config.isDebugLogsEnabled();
+            case "queuePersistence" -> config.isQueuePersistence();
             default -> false;
         };
         return val ? "ON" : "OFF";
@@ -286,6 +295,7 @@ public class MusicSettingsScreen extends Screen {
             case "visualizerEnabled" -> config.setVisualizerEnabled(!config.isVisualizerEnabled());
             case "miniPlayerEnabled" -> config.setMiniPlayerEnabled(!config.isMiniPlayerEnabled());
             case "debugLogs" -> config.setDebugLogsEnabled(!config.isDebugLogsEnabled());
+            case "queuePersistence" -> config.setQueuePersistence(!config.isQueuePersistence());
         }
     }
 
@@ -376,6 +386,7 @@ public class MusicSettingsScreen extends Screen {
         return switch (id) {
             case "fadeDuration" -> config.getFadeDurationMs();
             case "duckDuration" -> config.getDuckDurationMs();
+            case "songEntryHeight" -> config.getSongEntryHeight();
             default -> 0;
         };
     }
@@ -384,6 +395,7 @@ public class MusicSettingsScreen extends Screen {
         switch (id) {
             case "fadeDuration" -> config.setFadeDurationMs(v);
             case "duckDuration" -> config.setDuckDurationMs(v);
+            case "songEntryHeight" -> config.setSongEntryHeight(v);
         }
     }
 
@@ -509,6 +521,8 @@ public class MusicSettingsScreen extends Screen {
                     norm = getSliderFloat(def.id());
                 } else if (def.id().equals("duckDuration")) {
                     norm = (getSliderInt(def.id()) - 500f) / 4500f;
+                } else if (def.id().equals("songEntryHeight")) {
+                    norm = getSliderInt(def.id()) / 36f;
                 } else {
                     norm = (getSliderInt(def.id()) - 200f) / 1800f;
                 }
@@ -536,10 +550,24 @@ public class MusicSettingsScreen extends Screen {
                             yield Math.round(getSliderFloat(def.id()) * 100) + "%";
                         }
                     };
+                } else if (def.id().equals("songEntryHeight")) {
+                    int h = getSliderInt(def.id());
+                    valStr = h > 0 ? h + "px" : "Auto";
                 } else {
                     valStr = getSliderInt(def.id()) + "ms";
                 }
-                graphics.text(this.font, valStr, sl + sw + 6, sy + 4, 0xFFAAAAAA, true);
+
+                if (def.type() == SettingType.SLIDER_INT && def.id().equals(typingSliderId)) {
+                    int ex = sl + sw + 4;
+                    int ey = sy + 3;
+                    int ew = 52;
+                    int eh = 14;
+                    graphics.fill(ex, ey, ex + ew, ey + eh, 0xFF555555);
+                    graphics.fill(ex + 1, ey + 1, ex + ew - 1, ey + eh - 1, 0xFF222222);
+                    graphics.text(this.font, typingBuffer + (System.currentTimeMillis() / 600 % 2 == 0 ? "_" : " "), ex + 3, ey + 2, 0xFFFFFFFF, true);
+                } else {
+                    graphics.text(this.font, valStr, sl + sw + 6, sy + 4, 0xFFAAAAAA, true);
+                }
 
                 if (hovered) {
                     hoveredTooltip = def.tooltip();
@@ -573,10 +601,55 @@ public class MusicSettingsScreen extends Screen {
         super.extractRenderState(graphics, mouseX, mouseY, partialTick);
     }
 
+    // ─── Keyboard ───
+
+    @Override
+    public boolean keyPressed(net.minecraft.client.input.KeyEvent event) {
+        if (typingSliderId != null) {
+            int key = event.key();
+            if (key == org.lwjgl.glfw.GLFW.GLFW_KEY_ENTER || key == org.lwjgl.glfw.GLFW.GLFW_KEY_KP_ENTER) {
+                finishTyping();
+                return true;
+            }
+            if (key == org.lwjgl.glfw.GLFW.GLFW_KEY_ESCAPE) {
+                cancelTyping();
+                return true;
+            }
+            if (key == org.lwjgl.glfw.GLFW.GLFW_KEY_BACKSPACE && !typingBuffer.isEmpty()) {
+                typingBuffer = typingBuffer.substring(0, typingBuffer.length() - 1);
+                return true;
+            }
+            return true;
+        }
+        if (super.keyPressed(event)) return true;
+        if (searchBox != null && searchBox.isFocused()) return searchBox.keyPressed(event);
+        return false;
+    }
+
+    @Override
+    public boolean charTyped(net.minecraft.client.input.CharacterEvent event) {
+        if (typingSliderId != null) {
+            char ch = (char) event.codepoint();
+            if (Character.isDigit(ch) || ch == '-') {
+                if (typingBuffer.length() < 8) {
+                    typingBuffer += ch;
+                }
+                return true;
+            }
+            return true;
+        }
+        if (searchBox != null && searchBox.isFocused()) return searchBox.charTyped(event);
+        return super.charTyped(event);
+    }
+
     // ─── Mouse ───
 
     @Override
     public boolean mouseClicked(MouseButtonEvent event, boolean isFocused) {
+        if (typingSliderId != null) {
+            cancelTyping();
+            return true;
+        }
         if (super.mouseClicked(event, isFocused)) return true;
         if (event.buttonInfo().button() != 0) return false;
 
@@ -630,6 +703,16 @@ public class MusicSettingsScreen extends Screen {
             int st = sy + 4;
             int sh = 12;
             if (mx >= sliderX && mx <= sliderX + sliderW && my >= st && my <= st + sh) {
+                // Double-click on SLIDER_INT → open typing input
+                if (def.type() == SettingType.SLIDER_INT) {
+                    long now = System.currentTimeMillis();
+                    if (def.id().equals(lastSliderClickId) && now - lastSliderClickTime < 500) {
+                        startTyping(def.id());
+                        return true;
+                    }
+                    lastSliderClickId = def.id();
+                    lastSliderClickTime = now;
+                }
                 draggingSliderId = def.id();
                 setSliderFromMouse(def.id(), mx - sliderX, sliderW);
                 return true;
@@ -735,12 +818,47 @@ public class MusicSettingsScreen extends Screen {
         return super.mouseReleased(event);
     }
 
+    // ─── Double-click to type ───
+
+    private void startTyping(String id) {
+        typingSliderId = id;
+        draggingSliderId = null;
+        switch (id) {
+            case "songEntryHeight" -> {
+                int h = config.getSongEntryHeight();
+                typingBuffer = h > 0 ? String.valueOf(h) : "0";
+            }
+            case "fadeDuration" -> typingBuffer = String.valueOf(config.getFadeDurationMs());
+            case "duckDuration" -> typingBuffer = String.valueOf(config.getDuckDurationMs());
+        }
+    }
+
+    private void finishTyping() {
+        if (typingSliderId == null) return;
+        try {
+            switch (typingSliderId) {
+                case "fadeDuration" -> config.setFadeDurationMs(Math.max(200, Math.min(2000, Integer.parseInt(typingBuffer))));
+                case "duckDuration" -> config.setDuckDurationMs(Math.max(500, Math.min(5000, Integer.parseInt(typingBuffer))));
+                case "songEntryHeight" -> config.setSongEntryHeight(Math.max(0, Math.min(36, Integer.parseInt(typingBuffer))));
+            }
+        } catch (NumberFormatException ignored) {}
+        typingSliderId = null;
+        typingBuffer = "";
+    }
+
+    private void cancelTyping() {
+        typingSliderId = null;
+        typingBuffer = "";
+    }
+
     private void setSliderFromMouse(String id, double offset, int width) {
         float norm = (float) Math.max(0, Math.min(1, offset / width));
         if (id.equals("fadeDuration")) {
             setSliderInt(id, 200 + Math.round(norm * 1800));
         } else if (id.equals("duckDuration")) {
             setSliderInt(id, 500 + Math.round(norm * 4500));
+        } else if (id.equals("songEntryHeight")) {
+            setSliderInt(id, Math.round(norm * 36f));
         } else {
             setSliderFloat(id, norm);
         }

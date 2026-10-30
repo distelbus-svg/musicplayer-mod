@@ -85,6 +85,15 @@ public class MusicPlayerConfig {
     private int sidebarWidth = 0;
     private int heroWidth = 0;
 
+    // Song list entry height
+    private int songEntryHeight = 18;
+
+    // Queue persistence
+    private boolean queuePersistence = false;
+    private String savedQueuePath = "";
+    private long savedQueuePositionMs = 0;
+    private boolean savedQueuePaused = true;
+
     // Debug
     private boolean debugLogs = false;
 
@@ -321,6 +330,25 @@ public class MusicPlayerConfig {
 
     public boolean isDebugLogsEnabled() { return debugLogs; }
     public void setDebugLogsEnabled(boolean v) { this.debugLogs = v; save(); }
+
+    public int getSongEntryHeight() { return songEntryHeight; }
+    public void setSongEntryHeight(int v) {
+        if (v > 0 && v < 12) v = 12;
+        this.songEntryHeight = Math.max(0, Math.min(36, v));
+        save();
+    }
+
+    public boolean isQueuePersistence() { return queuePersistence; }
+    public void setQueuePersistence(boolean v) { this.queuePersistence = v; save(); }
+
+    public String getSavedQueuePath() { return savedQueuePath; }
+    public void setSavedQueuePath(String v) { this.savedQueuePath = v; save(); }
+
+    public long getSavedQueuePositionMs() { return savedQueuePositionMs; }
+    public void setSavedQueuePositionMs(long v) { this.savedQueuePositionMs = v; save(); }
+
+    public boolean isSavedQueuePaused() { return savedQueuePaused; }
+    public void setSavedQueuePaused(boolean v) { this.savedQueuePaused = v; save(); }
 
     public List<String> getFolderPaths() { return folderPaths; }
     public void setFolderPaths(List<String> v) { this.folderPaths = new ArrayList<>(v); save(); }

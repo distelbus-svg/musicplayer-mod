@@ -1,0 +1,16 @@
+{
+  "required": true,
+  "priority": 9999,
+  "package": "com.musicplayer.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "client": [
+    "SoundManagerAccessor",
+    "SoundEngineAccessor",
+    "WeighedSoundEventsAccessor",
+    "ChannelSourceAccessor",
+    "MusicManagerMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

@@ -24,6 +24,7 @@ dependencies {
     implementation 'javazoom:jlayer:1.0.1'
     include 'javazoom:jlayer:1.0.1'
     implementation include('net.jthink:jaudiotagger:3.0.1')
+    implementation include('org.jflac:jflac-codec:1.5.2')
 }
 
 processResources {

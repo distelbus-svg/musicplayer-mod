@@ -17,6 +17,7 @@ rootProject.name = 'musicplayer-mod'
 
 include '26.1.2'
 include '26.2'
+include '26.3'
 include 'Backports:1.21.11'
 include 'Backports:1.21.4'
 include 'Backports:1.20.1'

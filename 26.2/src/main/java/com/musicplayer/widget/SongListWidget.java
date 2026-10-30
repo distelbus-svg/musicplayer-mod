@@ -1,5 +1,6 @@
 package com.musicplayer.widget;
 
+import com.musicplayer.AlbumArtManager;
 import com.musicplayer.MusicPlayerManager;
 import com.musicplayer.SongInfo;
 import com.musicplayer.player.SoundtrackStateManager;
@@ -8,6 +9,7 @@ import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.ObjectSelectionList;
 import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.network.chat.Component;
+import net.minecraft.resources.Identifier;
 
 import java.util.List;
 import java.util.Map;
@@ -234,13 +236,27 @@ public class SongListWidget extends ObjectSelectionList<SongListWidget.SongEntry
                 prefixW = font.width(prefix);
             }
 
+            int titleOffset = left + 4 + (isPlaying ? prefixW : 0);
+
+            // Album art thumbnail
+            int artSize = Math.min(entryHeight - 4, 14);
+            String songPath = song.getPath();
+            Identifier artId = songPath != null ? AlbumArtManager.getInstance().getArtForSong(songPath, null) : null;
+            if (artId != null) {
+                int artX = titleOffset;
+                int artY = y + (entryHeight - artSize) / 2;
+                graphics.blit(artId, artX, artY, artX + artSize, artY + artSize, 0.0f, 1.0f, 0.0f, 1.0f);
+            }
+            int artArea = (artId != null) ? (artSize + 4) : 0;
+            titleOffset += artArea;
+
             if (onSelect == null) {
                 boolean liked = manager.getConfig().isLiked(song.getPath());
                 int heartColor = liked ? 0xFFFF4444 : 0xFF555555;
                 graphics.text(font, "\u2665", rightEdge - heartArea - 4, y + 2, heartColor, true);
             }
 
-            graphics.text(font, song.getTitle(), left + 4 + (isPlaying ? prefixW : 0), y + 2, textColor, true);
+            graphics.text(font, song.getTitle(), titleOffset, y + 2, textColor, true);
 
             String subText = song.getArtist();
             if (subText != null) {
@@ -248,7 +264,7 @@ public class SongListWidget extends ObjectSelectionList<SongListWidget.SongEntry
                 int subWidth = font.width(subText);
                 int subX = artistRight - subWidth;
                 int titleW = font.width(song.getTitle());
-                if (subX > left + 4 + (isPlaying ? prefixW : 0) + titleW + 8) {
+                if (subX > titleOffset + titleW + 8) {
                     graphics.text(font, subText, subX, y + 2, 0xFFAAAAAA, true);
                 }
             }

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# sync-source.sh — Copy a source file from 26.2 to all other versions.
+# sync-source.sh — Copy a source file from 26.3 to all other versions.
 #
 # Usage:
 #   ./sync-source.sh <relative-path>
@@ -17,7 +17,7 @@ set -euo pipefail
 # Minecraft.gui.setScreen), so files with screen-related calls may need
 # manual adjustment after sync.
 
-SRC="26.2/$1"
+SRC="26.3/$1"
 
 if [ ! -f "$SRC" ]; then
     echo "ERROR: source file not found: $SRC"

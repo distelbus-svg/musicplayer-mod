@@ -541,9 +541,6 @@ public class MusicPlayerScreenLegacy extends Screen {
 
     @Override
     public void onClose() {
-        if (manager.getEngine().isActive() && !manager.getEngine().isPaused()) {
-            manager.getEngine().togglePause();
-        }
         this.minecraft.gui.setScreen(null);
     }
 }

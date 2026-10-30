@@ -33,6 +33,9 @@ public class MusicPlayerManager {
     private final List<VanillaTrack> vanillaTracks = new ArrayList<>();
     private int vanillaIndex = -1;
 
+    // Queue persistence: pending restore after reloadLibraryFromDisk
+    private boolean pendingQueueRestore = false;
+
     // Reentrancy guard: nextTrack() must not recurse through the
     // onTrackFinished → nextTrack → playVanillaTrack → playTrack
     // → createMusicInstance()=null → pendingFailedAdvance → onTrackFinished chain.
@@ -107,6 +110,22 @@ public class MusicPlayerManager {
             }
         }
 
+        // If queue persistence is on and we have a saved song path, try to restore via path match
+        if (config.isQueuePersistence()) {
+            String savedPath = config.getSavedQueuePath();
+            if (savedPath != null && !savedPath.isEmpty()) {
+                for (int i = 0; i < playlist.size(); i++) {
+                    if (playlist.get(i).getPath().equals(savedPath)) {
+                        currentIndex = i;
+                        break;
+                    }
+                }
+            }
+            if (currentIndex >= 0 && !config.isSavedQueuePaused()) {
+                pendingQueueRestore = true;
+            }
+        }
+
         loaded = true;
     }
 
@@ -118,7 +137,7 @@ public class MusicPlayerManager {
                 scanFolderRecursive(f, out);
             } else {
                 String lower = f.getName().toLowerCase();
-                if (lower.endsWith(".mp3") || lower.endsWith(".wav")) {
+                if (lower.endsWith(".mp3") || lower.endsWith(".wav") || lower.endsWith(".flac")) {
                     out.add(SongInfo.fromFile(f));
                 }
             }
@@ -207,9 +226,17 @@ public class MusicPlayerManager {
 
     public void playSong(int index) {
         if (index < 0 || index >= playlist.size()) return;
+        if (config.isQueuePersistence()) {
+            saveQueueState();
+        }
         currentIndex = index;
         SongInfo song = playlist.get(index);
         config.setLastPlayedSong(song.getTitle());
+        if (config.isQueuePersistence() && song.getSource() == SongInfo.SourceType.LOCAL) {
+            config.setSavedQueuePath(song.getPath());
+            config.setSavedQueuePositionMs(0);
+            config.setSavedQueuePaused(false);
+        }
 
         if (song.getSource() == SongInfo.SourceType.VANILLA) {
             currentSongIsVanilla = true;
@@ -280,8 +307,15 @@ public class MusicPlayerManager {
                 if (current != null) {
                     com.musicplayer.stats.ListeningStatisticsManager.getInstance().resumeTrack(current.getPath());
                 }
+                if (config.isQueuePersistence()) {
+                    config.setSavedQueuePaused(false);
+                }
             } else {
                 com.musicplayer.stats.ListeningStatisticsManager.getInstance().pauseTrack();
+                if (config.isQueuePersistence()) {
+                    config.setSavedQueuePaused(true);
+                    config.setSavedQueuePositionMs(engine.getPositionMs());
+                }
             }
             engine.togglePause();
         } else if (!playlist.isEmpty()) {
@@ -291,15 +325,39 @@ public class MusicPlayerManager {
     }
 
     public void stop() {
+        if (config.isQueuePersistence()) {
+            saveQueueState();
+        }
         com.musicplayer.stats.ListeningStatisticsManager.getInstance().stopTrack();
         engine.stop();
         VanillaMusicPlayer.getInstance().stop();
         SoundtrackStateManager ssm = SoundtrackStateManager.getInstance();
         if (ssm.isAutoPlaying()) {
             Minecraft.getInstance().getMusicManager().stopPlaying();
-            ssm.clearAutoMusic();
         }
-        AlbumArtManager.getInstance().clear();
+    }
+
+    public boolean processQueueRestore() {
+        if (!pendingQueueRestore) return false;
+        pendingQueueRestore = false;
+        if (!config.isQueuePersistence() || currentIndex < 0) return false;
+        SongInfo song = playlist.get(currentIndex);
+        if (song.getSource() == SongInfo.SourceType.LOCAL) {
+            long pos = config.getSavedQueuePositionMs();
+            currentSource = SongSource.USER;
+            engine.play(new File(song.getPath()), pos);
+        }
+        return true;
+    }
+
+    private void saveQueueState() {
+        if (!config.isQueuePersistence()) return;
+        SongInfo current = getCurrentSong();
+        if (current != null && current.getSource() == SongInfo.SourceType.LOCAL) {
+            config.setSavedQueuePath(current.getPath());
+            config.setSavedQueuePositionMs(engine.getPositionMs());
+            config.setSavedQueuePaused(engine.isPaused());
+        }
     }
 
     public void nextTrack() {

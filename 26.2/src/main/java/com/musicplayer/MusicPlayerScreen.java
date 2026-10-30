@@ -269,7 +269,8 @@ public class MusicPlayerScreen extends Screen {
 
         int listTop = contentTop;
         int listHeight = contentBottom - listTop;
-        int songItemH = Math.max(12, (int)(16 * guiScale));
+        int cfgEntryH = cfg.getSongEntryHeight();
+        int songItemH = cfgEntryH > 0 ? cfgEntryH : Math.max(12, (int)(16 * guiScale));
         songList = new SongListWidget(this.minecraft, middleWidth, listHeight, listTop, songItemH);
         songList.setX(middleLeft);
         songList.setY(listTop);
@@ -1149,6 +1150,7 @@ public class MusicPlayerScreen extends Screen {
         m.put("nowPlayingStyle", "How the now-playing info is displayed");
         m.put("showNowPlayingToast", "Show a toast notification when a new song starts");
         m.put("miniPlayerEnabled", "Show the mini player overlay in-game");
+        m.put("songEntryHeight", "Height of each song row in the list (0 = auto)");
         m.put("themeSelector", "Change the color theme");
         m.put("fadeOnPause", "Gradually fade out when pausing");
         m.put("eqEnabled", "Enable 5-band equalizer with preamp");
@@ -1169,6 +1171,7 @@ public class MusicPlayerScreen extends Screen {
         m.put("fadeDuration", "Duration of the fade-on-pause effect");
         m.put("reverbMix", "Wet/dry mix for the reverb effect");
         m.put("musicFolder", "Set the folder containing your MP3/WAV files");
+        m.put("queuePersistence", "Save the current queue (song, position) across game restarts");
         m.put("debugLogs", "Enable verbose debug logging");
         m.put("listeningTime", "View your listening statistics");
         m.put("rememberResizing", "Save panel layout between sessions");
@@ -1217,6 +1220,12 @@ public class MusicPlayerScreen extends Screen {
         List<Object[]> dp = new ArrayList<>();
         dp.add(new Object[]{"nowPlayingStyle", "Now Playing", "cycle", c.getNowPlayingStyle().name()});
         dp.add(new Object[]{"showNowPlayingToast", "Toast", "toggle", c.isShowNowPlayingToast() ? "ON" : "OFF"});
+        int eh = c.getSongEntryHeight();
+        if (eh > 0) {
+            dp.add(new Object[]{"songEntryHeight", "Row Height", "slider", Math.round(eh / 36f * 100f) + "|" + eh + "px"});
+        } else {
+            dp.add(new Object[]{"songEntryHeight", "Row Height", "slider", "0|Auto"});
+        }
         dp.add(new Object[]{"miniPlayerEnabled", "Mini Player", "toggle", c.isMiniPlayerEnabled() ? "ON" : "OFF"});
         dp.add(new Object[]{"miniPlayerStyle", "MP Style", "cycle", c.getMiniPlayerStyle() == MusicPlayerConfig.MiniPlayerStyle.BIG ? "Big" : "Compact"});
         dp.add(new Object[]{"themeSelector", "Theme", "cycle", ColorTheme.get(c.getThemeId()).name()});
@@ -1268,6 +1277,7 @@ public class MusicPlayerScreen extends Screen {
 
         List<Object[]> ot = new ArrayList<>();
         ot.add(new Object[]{"musicFolder", "Music Folder", "folder", c.getMusicFolderPath().isEmpty() ? "(not set)" : c.getMusicFolderPath()});
+        ot.add(new Object[]{"queuePersistence", "Save Queue", "toggle", c.isQueuePersistence() ? "ON" : "OFF"});
         ot.add(new Object[]{"debugLogs", "Debug Logs", "toggle", c.isDebugLogsEnabled() ? "ON" : "OFF"});
         ot.add(new Object[]{"listeningTime", "Listening Stats", "action", "Open \u2192"});
         if (!hasFilter || ot.stream().anyMatch(match)) {
@@ -1309,6 +1319,7 @@ public class MusicPlayerScreen extends Screen {
             case "miniPlayerEnabled" -> c.setMiniPlayerEnabled(!c.isMiniPlayerEnabled());
             case "duckOnDamage" -> c.setDuckOnDamage(!c.isDuckOnDamage());
             case "debugLogs" -> c.setDebugLogsEnabled(!c.isDebugLogsEnabled());
+            case "queuePersistence" -> c.setQueuePersistence(!c.isQueuePersistence());
             case "miniPlayerStyle" -> {
                 c.setMiniPlayerStyle(c.getMiniPlayerStyle() == MusicPlayerConfig.MiniPlayerStyle.BIG
                     ? MusicPlayerConfig.MiniPlayerStyle.COMPACT : MusicPlayerConfig.MiniPlayerStyle.BIG);
@@ -1400,6 +1411,7 @@ public class MusicPlayerScreen extends Screen {
             case "duckVolume" -> c.setDuckVolume(pct);
             case "duckDuration" -> c.setDuckDurationMs(500 + Math.round(pct * 4500f));
             case "customVolumeLevel" -> c.setCustomVolumeKeybindLevel(pct);
+            case "songEntryHeight" -> c.setSongEntryHeight(Math.round(pct * 36f));
             case "fadeDuration" -> c.setFadeDurationMs(200 + Math.round(pct * 1800f));
             case "reverbMix" -> c.setReverbWet(pct);
         }
@@ -1855,7 +1867,7 @@ public class MusicPlayerScreen extends Screen {
         if (getFocused() instanceof EditBox) {
             return getFocused().keyPressed(event);
         }
-        if (event.key() == 77) {
+        if (MusicPlayerMod.getOpenGuiKey().matches(event)) {
             this.minecraft.gui.setScreen(null);
             return true;
         }
@@ -1878,9 +1890,6 @@ public class MusicPlayerScreen extends Screen {
 
     @Override
     public void onClose() {
-        if (manager.getEngine().isActive() && !manager.getEngine().isPaused()) {
-            manager.getEngine().togglePause();
-        }
         updateResizeCursor(false);
         this.minecraft.gui.setScreen(null);
     }
