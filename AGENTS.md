@@ -5,20 +5,21 @@
 ./gradlew build         # builds all versions in parallel
 ```
 
-Multi-project structure: `./gradlew :26.2:build` or `./gradlew :Backports:1.21.4:build` for individual versions.
+Multi-project structure: `./gradlew :26.3:build` or `./gradlew :Backports:1.21.4:build` for individual versions.
 
 JARs are output to each subproject's `build/libs/` directory:
+- `26.3/build/libs/` (main development version)
 - `26.2/build/libs/`
 - `26.1.2/build/libs/`
 - `Backports/*/build/libs/`
 
 ## Syncing source across versions
-Use `sync-source.sh` to copy a file from 26.2 to all other versions that already have it:
+Use `sync-source.sh` to copy a file from 26.3 to all other versions that already have it:
 ```sh
 ./sync-source.sh src/main/java/com/musicplayer/AudioEngine.java
 ```
 Only copies to versions where the target file already exists. To add a new file, create it manually first.
-**Note:** 26.1.2 uses a different screen API (`Minecraft.screen` / `Minecraft.setScreen`) vs 26.2 (`Minecraft.gui.screen()` / `Minecraft.gui.setScreen`), so files with screen-related calls may need manual adjustment after sync.
+**Note:** 26.1.2 uses a different screen API (`Minecraft.screen` / `Minecraft.setScreen`) vs 26.3 (`Minecraft.gui.screen()` / `Minecraft.gui.setScreen`), so files with screen-related calls may need manual adjustment after sync.
 
 ## Volume fix (cross-version)
 Three changes needed in each backport:
@@ -26,17 +27,29 @@ Three changes needed in each backport:
 2. **SoundtrackStateManager.tick()** — when `active && !confirmedActive`, call `soundExecutor.setVolume(manualInstance, volume)` if `volume < 1.0f`
 3. **MusicPlayerManager()** — `SoundtrackStateManager.getInstance().setVolume(config.getVolume());` in constructor
 
-See `26.2` for reference implementation. Backports 1.21.4, 1.20.1, 1.19.2, 1.16.5 share the same PlaybackSlot-based AudioEngine. 1.18.2 has a simpler engine and different SSM.
+See `26.3` for reference implementation. Backports 1.21.4, 1.20.1, 1.19.2, 1.16.5 share the same PlaybackSlot-based AudioEngine. 1.18.2 has a simpler engine and different SSM.
 
 ## Project Structure
-- `26.2/` — latest Minecraft version (unobfuscated, `net.fabricmc.fabric-loom`)
+- `26.3/` — latest Minecraft version, **main development version** (uses SDL instead of GLFW; see 26.3 porting notes)
+- `26.2/` — previous Minecraft version (GLFW + tinyfd)
 - `26.1.2/` — previous Minecraft version (unobfuscated, `net.fabricmc.fabric-loom`)
 - `Backports/*/` — each backport version (uses `net.fabricmc.fabric-loom-remap`)
-- `sync-source.sh` — copy a source file from 26.2 to matching files in other versions
+- `sync-source.sh` — copy a source file from 26.3 to matching files in other versions
 - `reference/` — reference mods (overtune-1.0.0.jar), icon.png
 - Config lives at `.minecraft/config/musicplayer.json`
 - Album art cache at `.minecraft/config/musicplayer/albumart/`
 - Playlists at `.minecraft/config/musicplayer/playlists/`
+
+## 26.3 porting notes (GLFW → SDL)
+Minecraft 26.3 replaced GLFW with SDL. `org.lwjgl.glfw.*` and `org.lwjgl.util.tinyfd.*` are no longer available; use:
+- **Key constants**: `InputConstants.KEY_*` (SDL scancode values) with `InputConstants.Type.KEYBOARD`. `event.key()` returns these values (verified via `KeyMapping.matches`/`InputConstants.getKey(KeyEvent)`). No more `GLFW_KEY_*`.
+- **File dialogs**: GLFW/tinyfd is gone; use `SdlFileDialogs` (`com.musicplayer`), which wraps SDL's **asynchronous** `SDLDialog.SDL_ShowOpenFileDialog/SDL_ShowSaveFileDialog/SDL_ShowOpenFolderDialog`. Call sites now pass a `Consumer<String>` (null = cancelled). The `SDL_DialogFileCallback` object is retained until invoked, then freed.
+- **Window focus**: no `glfwSetWindowFocusCallback`; poll `Window.isFocused()` once per client tick (`MusicPlayerMod`).
+- **Fullscreen**: `Window.isFullscreen()` is gone; use `Minecraft.getInstance().options.fullscreen().get()`.
+- **Cursors**: `glfwCreateStandardCursor`/`glfwSetCursor` → `CursorTypes.RESIZE_EW.select()` / `CursorTypes.ARROW.select()` (`com.mojang.blaze3d.platform.cursor`).
+- **Mouse button polling**: `glfwGetMouseButton` → `SDLMouse.SDL_GetMouseState(null, null) & SDLMouse.SDL_BUTTON_LMASK` (`org.lwjgl.sdl`).
+- **Modifiers in click handlers**: `MouseButtonEvent` implements `InputWithModifiers` → use `event.hasShiftDown()` etc.
+- **`SoundInstance.resolve`** was renamed to `getOrResolve` (see `FixedSoundInstance`).
 
 ## Key Architecture
 - **Two engines**: `AudioEngine` (JLayer/javax.sound for user MP3/WAV) and `VanillaMusicPlayer` (SoundManager for Minecraft tracks)
@@ -54,6 +67,7 @@ See `26.2` for reference implementation. Backports 1.21.4, 1.20.1, 1.19.2, 1.16.
 - **Cannot drag scrollbar**: Added `draggingScrollbar` flag, `scrollbarDragStartY`/`scrollbarDragStartScroll` tracking, and thumb-drag logic in `mouseClicked`/`mouseDragged`/`mouseReleased`.
 
 ### Prism instance mapping (for deployment)
+- 26.3 → `Music_Player_26.3` (`/Volumes/Samsung/Dokumente/Prism/Music_Player_26.3`; put the jar in `minecraft/mods/`; SDL; fabric-loader 0.19.5, MC 26.3, LWJGL 3.4.3)
 - 26.2 → `Fabulously Optimized(7)` (uses `minecraft.gui.setScreen`)
 - 26.1.2 → `Fabulously Optimized` (uses `minecraft.setScreen`)
 - 1.21.11 → `Fabulously Optimized(1)` (uses `minecraft.setScreen`, MouseButtonEvent)
@@ -64,7 +78,7 @@ See `26.2` for reference implementation. Backports 1.21.4, 1.20.1, 1.19.2, 1.16.
 - 1.16.5 → `Fabulously Optimized(6)` (PoseStack, addButton, TextFieldWidget)
 
 ## Sync-source notes
-After running `sync-source.sh`, you MUST adapt each backport's source files — the 26.2 API differs significantly from older versions. Common adaptations:
+After running `sync-source.sh`, you MUST adapt each backport's source files — the 26.3 API differs significantly from older versions. Common adaptations:
 - `GuiGraphicsExtractor` → `GuiGraphics` (1.21.x) or `PoseStack` (≤1.20.1)
 - `extractRenderState` → `render`
 - `gui.setScreen` → `minecraft.setScreen`

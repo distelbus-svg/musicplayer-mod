@@ -27,6 +27,7 @@ public class MusicManagerMixin {
     private boolean wasManualPlaying = false;
     private boolean wasSuppressing = false;
     private boolean wasPauseScreen = false;
+    private boolean wasEnginePlaying = false;
 
     @Inject(method = "tick", at = @At("HEAD"), cancellable = true)
     private void onTickHead(CallbackInfo ci) {
@@ -43,6 +44,18 @@ public class MusicManagerMixin {
                         this.currentMusic = null;
                     }
                     this.nextSongDelay = Integer.MAX_VALUE;
+                    // Pause AudioEngine for USER source if configured
+                    MusicPlayerConfig cfg = MusicPlayerConfig.getInstance();
+                    if (cfg.isPauseOnPauseScreen()) {
+                        MusicPlayerManager mpm = MusicPlayerManager.getInstance();
+                        if (mpm.getCurrentSource() == SongSource.USER) {
+                            var eng = mpm.getEngine();
+                            if (eng.isActive() && !eng.isPaused()) {
+                                eng.togglePause();
+                                wasEnginePlaying = true;
+                            }
+                        }
+                    }
                 }
                 wasPauseScreen = true;
                 ci.cancel();
@@ -52,6 +65,17 @@ public class MusicManagerMixin {
             if (wasPauseScreen) {
                 // Pause screen just closed — resume mod-managed tracks
                 SoundtrackStateManager.getInstance().resumeImmediate();
+                // Resume AudioEngine for USER source if we paused it
+                if (wasEnginePlaying) {
+                    wasEnginePlaying = false;
+                    MusicPlayerManager mpm = MusicPlayerManager.getInstance();
+                    if (mpm.getCurrentSource() == SongSource.USER) {
+                        var eng = mpm.getEngine();
+                        if (eng.isPaused()) {
+                            eng.togglePause();
+                        }
+                    }
+                }
                 wasPauseScreen = false;
             }
 

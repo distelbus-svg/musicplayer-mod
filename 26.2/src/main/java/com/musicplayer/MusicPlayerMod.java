@@ -26,6 +26,8 @@ import org.lwjgl.glfw.GLFW;
 public class MusicPlayerMod implements ClientModInitializer {
 
     public static final String MOD_ID = "musicplayer";
+
+    public static KeyMapping getOpenGuiKey() { return openGuiKey; }
     private static final KeyMapping.Category CATEGORY = KeyMapping.Category.register(
             Identifier.fromNamespaceAndPath(MOD_ID, "main")
     );
@@ -133,8 +135,6 @@ public class MusicPlayerMod implements ClientModInitializer {
                         if (focused) {
                             if (mgr.getCurrentSource() == MusicPlayerManager.SongSource.MINECRAFT) {
                                 com.musicplayer.player.SoundtrackStateManager.getInstance().refocus();
-                            } else if (cfg.isStopWhenUnfocused() && mgr.getEngine().isPaused()) {
-                                mgr.getEngine().togglePause();
                             }
                         } else {
                             if (mgr.getCurrentSource() == MusicPlayerManager.SongSource.MINECRAFT) {
@@ -151,16 +151,20 @@ public class MusicPlayerMod implements ClientModInitializer {
             }
             // Check for pending playback callbacks (from audio thread, flag-based)
             manager.getEngine().checkPendingCallback();
+            // Process pending queue restore (auto-play from saved position)
+            manager.processQueueRestore();
 
             // Only process keybinds when no screen is open (in-game)
             // Exception: open GUI key always works
             if (openGuiKey.consumeClick()) {
                 boolean newUi = com.musicplayer.config.MusicPlayerConfig.getInstance().isNewUiEnabled();
-                if (client.gui.screen() == null) {
+                var cur = client.gui.screen();
+                if (cur == null) {
                     client.gui.setScreen(newUi ? new MusicPlayerScreen() : new MusicPlayerScreenLegacy());
-                } else if ((newUi && client.gui.screen() instanceof MusicPlayerScreen)
-                        || (!newUi && client.gui.screen() instanceof MusicPlayerScreenLegacy)) {
-                    client.gui.setScreen(null); // Toggle off
+                } else if (cur instanceof MusicPlayerScreen || cur instanceof MusicPlayerScreenLegacy
+                        || cur instanceof MusicSettingsScreen || cur instanceof UpNextScreen
+                        || cur instanceof ListeningStatsScreen) {
+                    client.gui.setScreen(null);
                 }
             }
 

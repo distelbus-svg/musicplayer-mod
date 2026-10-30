@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "id": "musicplayer",
+  "version": "${version}",
+  "name": "Melodix Music Player",
+  "description": "Play your own MP3/WAV files or Minecraft soundtrack tracks in-game with a full GUI, mini player, visualizer, and album art. Client-side only, Fabric.",
+  "authors": [
+    "User"
+  ],
+  "license": "MIT",
+  "environment": "client",
+  "icon": "assets/musicplayer/icon.png",
+  "entrypoints": {
+    "client": [
+      "com.musicplayer.MusicPlayerMod"
+    ]
+  },
+  "mixins": [
+    "musicplayer.mixins.json"
+  ],
+  "depends": {
+    "fabricloader": ">=0.19.2",
+    "minecraft": ">=26.1.2",
+    "java": ">=21",
+    "fabric-api": "*"
+  }
+}

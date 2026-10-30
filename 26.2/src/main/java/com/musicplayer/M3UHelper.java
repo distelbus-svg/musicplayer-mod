@@ -46,7 +46,7 @@ public class M3UHelper {
 
                 if (songFile.exists() && songFile.isFile()) {
                     String lower = songFile.getName().toLowerCase();
-                    if (lower.endsWith(".mp3") || lower.endsWith(".wav")) {
+                    if (lower.endsWith(".mp3") || lower.endsWith(".wav") || lower.endsWith(".flac")) {
                         String title = songFile.getName();
                         int d = title.lastIndexOf('.');
                         if (d > 0) title = title.substring(0, d);

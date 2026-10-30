@@ -2,6 +2,10 @@ package com.musicplayer;
 
 import com.musicplayer.config.MusicPlayerConfig;
 import javazoom.jl.decoder.*;
+import org.jflac.ChannelData;
+import org.jflac.FLACDecoder;
+import org.jflac.frame.Frame;
+import org.jflac.metadata.StreamInfo;
 import javax.sound.sampled.*;
 import java.io.*;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -145,6 +149,7 @@ public class AudioEngine {
             if (primary.pause) {
                 primary.pause = false;
                 primary.stopReq = false;
+                if (primary.line != null) primary.line.start();
                 primary.startFade(this.volume, cfg.getFadeDurationMs());
             } else {
                 primary.startFade(0f, cfg.getFadeDurationMs());
@@ -153,7 +158,7 @@ public class AudioEngine {
             primary.pause = !primary.pause;
             primary.stopReq = false;
             if (primary.line != null) {
-                if (primary.pause) primary.line.stop();
+                if (primary.pause) { primary.line.stop(); primary.line.flush(); }
                 else primary.line.start();
             }
         }
@@ -269,6 +274,7 @@ public class AudioEngine {
 
         void interrupt() {
             if (thread != null) {
+                thread.interrupt();
                 try { thread.join(500); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
             }
         }
@@ -352,6 +358,7 @@ public class AudioEngine {
             try {
                 if (file.getName().toLowerCase().endsWith(".mp3")) playMp3(file, seekToMs);
                 else if (file.getName().toLowerCase().endsWith(".wav")) playWav(file, seekToMs);
+                else if (file.getName().toLowerCase().endsWith(".flac")) playFlac(file, seekToMs);
             } catch (Exception e) {
                 e.printStackTrace();
             } finally {
@@ -367,7 +374,8 @@ public class AudioEngine {
             if (line != null) {
                 try {
                     if (line.isOpen()) {
-                        line.drain();
+                        line.stop();
+                        line.flush();
                         line.close();
                     }
                 } catch (Exception ignored) {}
@@ -492,8 +500,10 @@ public class AudioEngine {
             long frameSize = orig.getFrameSize();
             long frameRate = (long) orig.getFrameRate();
 
-            while ((n = ais.read(buf)) != -1 && !stopReq) {
+            while (!stopReq) {
                 if (pause) { Thread.sleep(50); continue; }
+                n = ais.read(buf);
+                if (n == -1) break;
                 AudioEngine.this.tickDuck();
                 AudioDSP.processBytes(buf, 0, n, orig.getChannels(), fadeSampleRate);
                 int sampleCount = n / 2;
@@ -506,6 +516,121 @@ public class AudioEngine {
 
             cleanupLine();
             ais.close();
+        }
+
+        private void playFlac(File file, long seekToMs) throws Exception {
+            FileInputStream fis = new FileInputStream(file);
+            FLACDecoder decoder = new FLACDecoder(fis);
+            decoder.readMetadata();
+            StreamInfo si = decoder.getStreamInfo();
+
+            int origSampleRate = (int)si.getSampleRate();
+            int channels = si.getChannels();
+            int bitsPerSample = si.getBitsPerSample();
+            long totalSamples = si.getTotalSamples();
+
+            int sampleRate = (int)(origSampleRate * playbackSpeed);
+            durationMs = totalSamples > 0 && origSampleRate > 0
+                ? totalSamples * 1000L / origSampleRate
+                : estimateFlacDuration(file);
+
+            AudioFormat fmt = new AudioFormat(sampleRate, 16, channels, true, false);
+            line = AudioSystem.getSourceDataLine(fmt);
+            line.open(fmt);
+            line.start();
+            fadeSampleRate = sampleRate;
+            applyVolume(fadeVolume);
+            fadeGain = fadeVolume;
+
+            long samplesProcessed = 0;
+            if (seekToMs > 0 && origSampleRate > 0) {
+                long seekSamples = seekToMs * origSampleRate / 1000;
+                while (samplesProcessed < seekSamples) {
+                    Frame seekFrame = decoder.readNextFrame();
+                    if (seekFrame == null) break;
+                    samplesProcessed += seekFrame.header.blockSize;
+                }
+                positionMs = Math.min(samplesProcessed * 1000L / origSampleRate, seekToMs);
+            } else {
+                positionMs = 0;
+            }
+
+            Frame frame = null;
+            while (!stopReq) {
+                if (pause) { Thread.sleep(50); continue; }
+                frame = decoder.readNextFrame();
+                if (frame == null) break;
+
+                int blockSize = frame.header.blockSize;
+                int frameChannels = frame.header.channels;
+                ChannelData[] chData = decoder.getChannelData();
+
+                byte[] bytes = new byte[blockSize * frameChannels * 2];
+                int shift = bitsPerSample - 16;
+                int idx = 0;
+                for (int s = 0; s < blockSize; s++) {
+                    for (int ch = 0; ch < frameChannels; ch++) {
+                        int sample = chData[ch].getOutput()[s];
+                        if (shift > 0) sample >>= shift;
+                        else if (shift < 0) sample <<= -shift;
+                        if (sample > 32767) sample = 32767;
+                        if (sample < -32768) sample = -32768;
+                        bytes[idx++] = (byte)(sample & 0xFF);
+                        bytes[idx++] = (byte)((sample >> 8) & 0xFF);
+                    }
+                }
+
+                AudioEngine.this.tickDuck();
+                AudioDSP.processBytes(bytes, 0, bytes.length, frameChannels, fadeSampleRate);
+
+                synchronized (vizBuffer) {
+                    float scale = frameChannels > 1 ? 0.5f : 1f;
+                    int step = Math.max(1, blockSize / VIZ_SAMPLES);
+                    for (int i = 0, vi = 0; vi < VIZ_SAMPLES && i < blockSize; i += step, vi++) {
+                        float sum = 0;
+                        int count = 0;
+                        for (int j = 0; j < step && i + j < blockSize; j++) {
+                            int mix = 0;
+                            for (int ch = 0; ch < frameChannels; ch++) {
+                                int samp = chData[ch].getOutput()[i + j];
+                                if (shift > 0) samp >>= shift;
+                                else if (shift < 0) samp <<= -shift;
+                                if (samp > 32767) samp = 32767;
+                                if (samp < -32768) samp = -32768;
+                                mix += samp;
+                            }
+                            sum += Math.abs(mix * scale);
+                            count++;
+                        }
+                        vizBuffer[vi] = (count > 0) ? sum / count / 32768f : 0;
+                    }
+                }
+
+                int sampleCount = bytes.length / 2;
+                advanceFade(sampleCount);
+                applyFadeToBytes(bytes, 0, bytes.length);
+                line.write(bytes, 0, bytes.length);
+
+                samplesProcessed += blockSize;
+                if (origSampleRate > 0) {
+                    positionMs = samplesProcessed * 1000L / origSampleRate;
+                }
+            }
+
+            cleanupLine();
+            fis.close();
+        }
+
+        private long estimateFlacDuration(File file) {
+            try {
+                org.jaudiotagger.audio.AudioFile af = org.jaudiotagger.audio.AudioFileIO.read(file);
+                org.jaudiotagger.audio.AudioHeader h = af.getAudioHeader();
+                if (h != null) {
+                    int seconds = h.getTrackLength();
+                    if (seconds > 0) return seconds * 1000L;
+                }
+            } catch (Exception ignored) {}
+            return 0;
         }
 
         private long estimateMp3Duration(File file) {
