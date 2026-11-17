@@ -1,0 +1,35 @@
+name: Bug report
+description: Report a bug in Melodix
+labels: [bug]
+body:
+  - type: input
+    id: melodix-version
+    attributes:
+      label: Melodix version
+      description: Which Melodix version are you running? (see the mod list in-game or the jar file name, e.g. 3.1.1)
+    validations:
+      required: true
+  - type: input
+    id: minecraft-version
+    attributes:
+      label: Minecraft version
+      description: e.g. 26.3
+    validations:
+      required: true
+  - type: input
+    id: fabric-loader-version
+    attributes:
+      label: Fabric Loader version
+      description: (optional) e.g. 0.19.2
+  - type: input
+    id: fabric-api-version
+    attributes:
+      label: Fabric API version
+      description: (optional) e.g. the version shown next to Fabric API in your mod list
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you expect to happen instead? Include the crash report / latest.log if there is one (`.minecraft/crash-reports/`, `.minecraft/logs/latest.log`).
+    validations:
+      required: true
