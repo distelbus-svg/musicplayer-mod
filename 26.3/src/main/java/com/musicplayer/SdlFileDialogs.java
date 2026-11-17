@@ -23,7 +23,21 @@ public final class SdlFileDialogs {
 
     private static final List<SDL_DialogFileCallback> PENDING = new ArrayList<>();
 
+    // Native dialogs don't show over a fullscreen window (macOS in particular). Any caller that reaches show() while
+    // fullscreen leaves fullscreen first and gets its dialog once the window has settled.
+    private static Runnable pendingShow;
+    private static int pendingTicks;
+
     private SdlFileDialogs() {
+    }
+
+    /** Call once per client tick. */
+    public static void tick() {
+        if (pendingShow != null && --pendingTicks <= 0) {
+            Runnable r = pendingShow;
+            pendingShow = null;
+            r.run();
+        }
     }
 
     public static void openFile(String title, String defaultLocation, Consumer<String> onResult) {
@@ -42,6 +56,13 @@ public final class SdlFileDialogs {
         Minecraft mc = Minecraft.getInstance();
         if (mc == null || mc.getWindow() == null) {
             if (onResult != null) onResult.accept(null);
+            return;
+        }
+        if (pendingShow == null && mc.options != null && mc.options.fullscreen().get()) {
+            com.musicplayer.hud.NotificationManager.showSystem("Leaving fullscreen to open the file browser");
+            mc.options.fullscreen().set(false);
+            pendingShow = () -> show(kind, defaultLocation, onResult);
+            pendingTicks = 15;
             return;
         }
         long window = mc.getWindow().handle();

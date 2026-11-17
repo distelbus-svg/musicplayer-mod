@@ -1,5 +1,7 @@
 package com.musicplayer.widget;
 
+import com.musicplayer.Ids;
+
 import com.mojang.blaze3d.platform.NativeImage;
 import com.musicplayer.AlbumArtManager;
 import com.musicplayer.MusicPlayerManager;
@@ -48,10 +50,10 @@ public class PlaylistCoverWidget extends AbstractWidget {
         String coverPath = playlist.getCustomCoverPath();
 
         if (coverPath != null && !coverPath.isEmpty()) {
-            Identifier cachedId = playlist.getCachedCoverId();
+            Identifier cachedId = Ids.of(playlist.getCachedCoverId());
             if (cachedId == null) {
                 cachedId = loadCustomCoverStatic(coverPath, playlist);
-                playlist.setCachedCoverId(cachedId);
+                playlist.setCachedCoverId(Ids.str(cachedId));
             }
             Identifier id = cachedId != null ? cachedId : AlbumArtManager.DEFAULT_ALBUM_ART;
             graphics.blit(id, x, y, x + size, y + size, 0.0f, 1.0f, 0.0f, 1.0f);
@@ -131,7 +133,7 @@ public class PlaylistCoverWidget extends AbstractWidget {
                         if (pngData != null) {
                             NativeImage image = NativeImage.read(new ByteArrayInputStream(pngData));
                             if (image != null) {
-                                Identifier id = Identifier.fromNamespaceAndPath("musicplayer",
+                                Identifier id = Ids.rl("musicplayer",
                                         "cover_sync/" + Math.abs(path.hashCode()));
                                 DynamicTexture tex = new DynamicTexture(() -> id.toString(), image);
                                 Minecraft.getInstance().getTextureManager().register(id, tex);
@@ -169,7 +171,7 @@ public class PlaylistCoverWidget extends AbstractWidget {
         File file = new File(path);
         if (!file.exists()) return null;
 
-        Identifier id = Identifier.fromNamespaceAndPath("musicplayer", "playlist_cover/" + Math.abs(playlist.getName().hashCode()));
+        Identifier id = Ids.rl("musicplayer", "playlist_cover/" + Math.abs(playlist.getName().hashCode()));
         try {
             byte[] data = Files.readAllBytes(file.toPath());
             if (data == null || data.length < 4) return null;
@@ -221,7 +223,7 @@ public class PlaylistCoverWidget extends AbstractWidget {
         File file = new File(path);
         if (!file.exists()) return null;
 
-        Identifier id = Identifier.fromNamespaceAndPath("musicplayer", "playlist_cover/" + Math.abs(playlist.getName().hashCode()));
+        Identifier id = Ids.rl("musicplayer", "playlist_cover/" + Math.abs(playlist.getName().hashCode()));
         try {
             byte[] data = Files.readAllBytes(file.toPath());
             if (data == null || data.length < 4) return null;

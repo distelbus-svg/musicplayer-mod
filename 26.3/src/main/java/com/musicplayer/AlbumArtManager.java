@@ -29,10 +29,10 @@ public class AlbumArtManager {
     private static final AlbumArtManager INSTANCE = new AlbumArtManager();
 
     public static final Identifier ALBUM_ART_ID =
-            Identifier.fromNamespaceAndPath("musicplayer", "album_art/current");
+            Ids.rl("musicplayer", "album_art/current");
 
     public static final Identifier DEFAULT_ALBUM_ART =
-            Identifier.fromNamespaceAndPath("musicplayer", "textures/music/albums/cover_fallback");
+            Ids.rl("musicplayer", "textures/music/albums/cover_fallback");
 
     // Formats that reliably support embedded cover art
     private static final Set<String> SUPPORTED_EXTENSIONS = Set.of(
@@ -42,17 +42,17 @@ public class AlbumArtManager {
     private static final Map<String, Identifier> BUILT_IN_ART = new HashMap<>();
     static {
         String ns = "musicplayer";
-        BUILT_IN_ART.put("minecraft",                   Identifier.fromNamespaceAndPath(ns, "textures/music/albums/minecraft"));
-        BUILT_IN_ART.put("minecraft_volume_alpha",       Identifier.fromNamespaceAndPath(ns, "textures/music/albums/minecraft_volume_alpha"));
-        BUILT_IN_ART.put("minecraft_volume_beta",        Identifier.fromNamespaceAndPath(ns, "textures/music/albums/minecraft_volume_beta"));
-        BUILT_IN_ART.put("minecraft_nether_update",      Identifier.fromNamespaceAndPath(ns, "textures/music/albums/nether"));
-        BUILT_IN_ART.put("minecraft_the_end",            Identifier.fromNamespaceAndPath(ns, "textures/music/albums/the_end"));
-        BUILT_IN_ART.put("minecraft_caves_and_cliffs",   Identifier.fromNamespaceAndPath(ns, "textures/music/albums/caves_cliffs"));
-        BUILT_IN_ART.put("minecraft_the_wild_update",    Identifier.fromNamespaceAndPath(ns, "textures/music/albums/wild_update"));
-        BUILT_IN_ART.put("minecraft_trails_and_tales",   Identifier.fromNamespaceAndPath(ns, "textures/music/albums/cover_fallback"));
-        BUILT_IN_ART.put("minecraft_tricky_trials",      Identifier.fromNamespaceAndPath(ns, "textures/music/albums/cover_fallback"));
-        BUILT_IN_ART.put("minecraft_the_garden_awakens", Identifier.fromNamespaceAndPath(ns, "textures/music/albums/cover_fallback"));
-        BUILT_IN_ART.put("minecraft_music_discs",        Identifier.fromNamespaceAndPath(ns, "textures/music/albums/music_discs"));
+        BUILT_IN_ART.put("minecraft",                   Ids.rl(ns, "textures/music/albums/minecraft"));
+        BUILT_IN_ART.put("minecraft_volume_alpha",       Ids.rl(ns, "textures/music/albums/minecraft_volume_alpha"));
+        BUILT_IN_ART.put("minecraft_volume_beta",        Ids.rl(ns, "textures/music/albums/minecraft_volume_beta"));
+        BUILT_IN_ART.put("minecraft_nether_update",      Ids.rl(ns, "textures/music/albums/nether"));
+        BUILT_IN_ART.put("minecraft_the_end",            Ids.rl(ns, "textures/music/albums/the_end"));
+        BUILT_IN_ART.put("minecraft_caves_and_cliffs",   Ids.rl(ns, "textures/music/albums/caves_cliffs"));
+        BUILT_IN_ART.put("minecraft_the_wild_update",    Ids.rl(ns, "textures/music/albums/wild_update"));
+        BUILT_IN_ART.put("minecraft_trails_and_tales",   Ids.rl(ns, "textures/music/albums/cover_fallback"));
+        BUILT_IN_ART.put("minecraft_tricky_trials",      Ids.rl(ns, "textures/music/albums/cover_fallback"));
+        BUILT_IN_ART.put("minecraft_the_garden_awakens", Ids.rl(ns, "textures/music/albums/cover_fallback"));
+        BUILT_IN_ART.put("minecraft_music_discs",        Ids.rl(ns, "textures/music/albums/music_discs"));
     }
 
     public static Identifier getBuiltInArt(String albumKey) {
@@ -60,7 +60,7 @@ public class AlbumArtManager {
         return BUILT_IN_ART.get(albumKey);
     }
 
-    private static final int MAX_CACHED_SONG_ART = 256;
+    private static final int MAX_CACHED_SONG_ART = 512;
 
     // Render-thread only. Access-ordered so rarely seen covers are evicted and their textures freed.
     private final Map<String, Identifier> songArtCache = new java.util.LinkedHashMap<>(64, 0.75f, true) {
@@ -72,12 +72,27 @@ public class AlbumArtManager {
         }
     };
     private int songArtCounter;
+    // When each song's cover was last asked for (render thread writes, loader thread reads). Loads queued for rows
+    // that have scrolled away are skipped, so the visible rows never wait behind a backlog.
+    private final Map<String, Long> lastWanted = new java.util.concurrent.ConcurrentHashMap<>();
+    private final Map<String, Integer> artFailures = new java.util.concurrent.ConcurrentHashMap<>();
+    private static final long STALE_MS = 1500;
 
     private static void releaseSongArt(Identifier id) {
         if (id == null || id.equals(DEFAULT_ALBUM_ART) || BUILT_IN_ART.containsValue(id)) return;
         try {
             Minecraft.getInstance().getTextureManager().release(id);
         } catch (Exception ignored) {}
+    }
+
+    /** Forgets a not-yet-loaded entry so the next getArtForSong() queues the load again. */
+    private void dropForRetry(String path, Identifier placeholderId) {
+        Minecraft.getInstance().execute(() -> {
+            if (placeholderId.equals(songArtCache.get(path))) {
+                songArtCache.remove(path);
+                releaseSongArt(placeholderId);
+            }
+        });
     }
 
     /** Swaps a song's placeholder for the shared fallback cover once we know it has no art. */
@@ -102,10 +117,11 @@ public class AlbumArtManager {
         }
         if (path == null || path.isEmpty()) return DEFAULT_ALBUM_ART;
 
+        lastWanted.put(path, System.currentTimeMillis());
         Identifier cached = songArtCache.get(path);
         if (cached != null) return cached;
 
-        Identifier newId = Identifier.fromNamespaceAndPath("musicplayer", "album_art/song_" + (songArtCounter++));
+        Identifier newId = Ids.rl("musicplayer", "album_art/song_" + (songArtCounter++));
         songArtCache.put(path, newId);
 
         try {
@@ -118,10 +134,29 @@ public class AlbumArtManager {
 
         File songFile = new File(path);
         if (!songFile.exists()) {
-            markNoArt(path, newId);
+            if (!MelodixApi.hasArtProviders()) {
+                markNoArt(path, newId);
+                return newId;
+            }
+            // Not a local file (e.g. a YouTube URL): ask the addon, on its own pool so a slow
+            // download never queues up behind embedded-art reads.
+            remoteExecutor.submit(() -> {
+                try {
+                    byte[] bytes = MelodixApi.artFor(path);
+                    if (bytes != null && uploadSongArt(newId, bytes, path)) return;
+                } catch (Exception e) {
+                    LOGGER.debug("Remote art failed for {}", path, e);
+                }
+                markNoArt(path, newId);
+            });
             return newId;
         }
         executor.submit(() -> {
+            Long wanted = lastWanted.get(path);
+            if (wanted == null || System.currentTimeMillis() - wanted > STALE_MS) {
+                dropForRetry(path, newId); // scrolled away before it got its turn: ask again when it is visible
+                return;
+            }
             try {
                 byte[] custom = customArtBytes(path);
                 if (custom != null && uploadSongArt(newId, custom, path)) return;
@@ -137,6 +172,10 @@ public class AlbumArtManager {
                 if (rawImage != null && uploadSongArt(newId, rawImage, path)) return;
             } catch (Exception e) {
                 LOGGER.error("Failed to load art for song: {}", path, e);
+                if (artFailures.merge(path, 1, Integer::sum) < 3) {
+                    dropForRetry(path, newId); // a read that failed once (file busy, ...) gets another go
+                    return;
+                }
             }
             markNoArt(path, newId);
         });
@@ -148,13 +187,41 @@ public class AlbumArtManager {
     private boolean hasArt = false;
     private int artWidth = 0;
     private int artHeight = 0;
-    private final ExecutorService executor = Executors.newSingleThreadExecutor(r -> {
-        Thread t = new Thread(r, "musicplayer-albumart");
+    // Newest request first: what is on screen now is what was asked for last.
+    private final ExecutorService executor = new java.util.concurrent.ThreadPoolExecutor(1, 1, 0L,
+        java.util.concurrent.TimeUnit.MILLISECONDS,
+        new java.util.concurrent.LinkedBlockingDeque<Runnable>() {
+            @Override public boolean offer(Runnable r) { return offerFirst(r); }
+        }, r -> {
+            Thread t = new Thread(r, "musicplayer-albumart");
+            t.setDaemon(true);
+            return t;
+        });
+
+    private final ExecutorService remoteExecutor = Executors.newFixedThreadPool(3, r -> {
+        Thread t = new Thread(r, "musicplayer-albumart-remote");
         t.setDaemon(true);
         return t;
     });
+    /** Path whose remote art is currently wanted as the now-playing cover; stale results are dropped. */
+    private volatile String remoteArtPath;
 
     private AlbumArtManager() {}
+
+    /** Now-playing cover for a non-file song, from the registered art providers. */
+    public void loadForRemote(String path) {
+        clear();
+        remoteArtPath = path;
+        if (path == null || !MelodixApi.hasArtProviders()) return;
+        remoteExecutor.submit(() -> {
+            try {
+                byte[] bytes = MelodixApi.artFor(path);
+                if (bytes != null && path.equals(remoteArtPath)) uploadImageBytes(bytes, path);
+            } catch (Exception e) {
+                LOGGER.debug("Remote now-playing art failed for {}", path, e);
+            }
+        });
+    }
 
     public static AlbumArtManager getInstance() {
         return INSTANCE;
@@ -173,7 +240,7 @@ public class AlbumArtManager {
     private void registerTexture(Identifier id, Minecraft mc, Set<Identifier> loaded) {
         if (!loaded.add(id)) return;
         try {
-            Identifier pngId = Identifier.fromNamespaceAndPath(id.getNamespace(), id.getPath() + ".png");
+            Identifier pngId = Ids.rl(id.getNamespace(), id.getPath() + ".png");
             try (var resource = mc.getResourceManager().open(pngId)) {
                 byte[] bytes = readAllBytes(resource);
                 if (bytes.length > 0) {
@@ -195,6 +262,7 @@ public class AlbumArtManager {
     public int getArtHeight() { return artHeight; }
 
     public void loadForSong(File songFile) {
+        remoteArtPath = null; // a local song supersedes any pending remote cover
         if (songFile == null) {
             clear();
             return;

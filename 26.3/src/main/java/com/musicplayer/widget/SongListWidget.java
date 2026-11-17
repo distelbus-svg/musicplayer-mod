@@ -188,7 +188,12 @@ public class SongListWidget extends ObjectSelectionList<SongListWidget.SongEntry
 
             boolean isPlaying = false;
             if (manager.getCurrentSong() != null && manager.getCurrentSong().getPath().equals(song.getPath())) {
-                isPlaying = manager.getEngine().isActive();
+                if (manager.getCurrentSource() == MusicPlayerManager.SongSource.MINECRAFT) {
+                    var vmp = com.musicplayer.VanillaMusicPlayer.getInstance();
+                    isPlaying = vmp.isPlaying() || vmp.isPaused();
+                } else {
+                    isPlaying = manager.getEngine().isActive();
+                }
             }
 
             boolean hovered = SongListWidget.this.getHovered() == this;

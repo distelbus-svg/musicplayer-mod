@@ -54,6 +54,20 @@ public class PlaylistListWidget extends ObjectSelectionList<PlaylistListWidget.P
         this.addEntry(entry);
     }
 
+    /**
+     * Row-relative x offsets of the action hint labels {Play, Export, Edit, Del}, right-aligned inside the row.
+     * Used for both drawing and click zones so they always line up.
+     */
+    private static int[] actionStarts(int rowWidth) {
+        var font = Minecraft.getInstance().font;
+        int sep = font.width(" | ");
+        int del = rowWidth - 4 - font.width("Del");
+        int edit = del - sep - font.width("Edit");
+        int export = edit - sep - font.width("Export");
+        int play = export - sep - font.width("Play");
+        return new int[]{play, export, edit, del};
+    }
+
     public class PlaylistEntry extends ObjectSelectionList.Entry<PlaylistEntry> {
         private final Playlist playlist;
         private final PlaylistAction playAction;
@@ -107,7 +121,7 @@ public class PlaylistListWidget extends ObjectSelectionList<PlaylistListWidget.P
             if (isLikedSongs) {
                 graphics.text(Minecraft.getInstance().font, "Play", x + width - 50, y + 12, 0xFF888888, true);
             } else {
-                graphics.text(Minecraft.getInstance().font, "Play | Exp | Edit | Del", x + width - 110, y + 12, 0xFF888888, true);
+                graphics.text(Minecraft.getInstance().font, "Play | Export | Edit | Del", x + actionStarts(width)[0], y + 12, 0xFF888888, true);
             }
         }
 
@@ -127,11 +141,13 @@ public class PlaylistListWidget extends ObjectSelectionList<PlaylistListWidget.P
                     return true;
                 }
 
-                if (relX > this.getWidth() - 30) {
+                int[] starts = actionStarts(this.getWidth());
+                int halfSep = Minecraft.getInstance().font.width(" | ") / 2;
+                if (relX >= (isLiked ? this.getWidth() - 30 : starts[3] - halfSep)) {
                     deleteAction.run(playlist);
-                } else if (!isLiked && relX > this.getWidth() - 55) {
+                } else if (!isLiked && relX >= starts[2] - halfSep) {
                     editAction.run(playlist);
-                } else if (!isLiked && relX > this.getWidth() - 80) {
+                } else if (!isLiked && relX >= starts[1] - halfSep) {
                     if (exportAction != null) exportAction.run(playlist);
                 } else {
                     playAction.run(playlist);

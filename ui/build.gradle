@@ -1,0 +1,25 @@
+// Minecraft-free shared UI (Ore screens, HUD). Compiled on its own (Java 17) to guarantee it never imports
+// Minecraft/Fabric; each version project also compiles these sources directly via srcDir.
+plugins {
+    id 'java-library'
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    implementation project(':core')
+    compileOnly 'com.google.code.gson:gson:2.11.0'
+    compileOnly 'net.jthink:jaudiotagger:3.0.1'
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.release = 17
+}
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(17)
+    }
+}

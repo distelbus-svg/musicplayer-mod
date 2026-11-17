@@ -91,11 +91,21 @@ public class SidebarWidget extends ObjectSelectionList<SidebarWidget.SidebarEntr
         return this.getX() + this.width - 6;
     }
 
+    @Override
+    public void extractWidgetRenderState(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float partialTick) {
+        super.extractWidgetRenderState(graphics, mouseX, mouseY, partialTick);
+        SidebarEntry hovered = getHovered();
+        if (hovered != null && hovered.truncated) {
+            graphics.setTooltipForNextFrame(Minecraft.getInstance().font, Component.literal(hovered.tooltipText()), mouseX, mouseY);
+        }
+    }
+
     public class SidebarEntry extends ObjectSelectionList.Entry<SidebarEntry> {
         private final Kind kind;
         private final String key;
         private final String label;
         private final Playlist playlist; // null unless Kind.PLAYLIST
+        private boolean truncated; // set while rendering: label was cut with "...", so show it in full on hover
 
         public SidebarEntry(Kind kind, String key, String label) {
             this(kind, key, label, null);
@@ -169,11 +179,12 @@ public class SidebarWidget extends ObjectSelectionList<SidebarWidget.SidebarEntr
 
             // Truncate playlist label to avoid overlapping the count
             String displayLabel = label;
-            int maxLabelW = w - labelX - 10;
-            if (meta != null) maxLabelW -= font.width(meta) + 6;
+            int maxLabelW = w - (labelX - x) - 6;
+            if (meta != null) maxLabelW -= font.width(meta) + 4;
             if (font.width(displayLabel) > maxLabelW && maxLabelW > 20) {
-                displayLabel = font.plainSubstrByWidth(displayLabel, maxLabelW - 4) + "...";
+                displayLabel = font.plainSubstrByWidth(displayLabel, maxLabelW - font.width("...")) + "...";
             }
+            truncated = !displayLabel.equals(label);
             graphics.text(font, displayLabel, labelX, y + 3, textColor, true);
 
             if (meta != null) {
@@ -193,6 +204,10 @@ public class SidebarWidget extends ObjectSelectionList<SidebarWidget.SidebarEntr
                 return true;
             }
             return false;
+        }
+
+        String tooltipText() {
+            return playlist != null ? playlist.getName() : label;
         }
 
         public Kind kind() { return kind; }

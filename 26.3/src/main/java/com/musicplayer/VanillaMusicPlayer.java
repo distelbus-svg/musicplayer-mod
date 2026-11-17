@@ -33,8 +33,16 @@ public class VanillaMusicPlayer {
         SoundtrackStateManager.getInstance().togglePause();
     }
 
-    public boolean isPaused() { return SoundtrackStateManager.getInstance().isManualPaused(); }
-    public boolean isPlaying() { return SoundtrackStateManager.getInstance().isManualPlaying(); }
+    /** Paused: a track chosen in Melodix, or one the game started by itself. */
+    public boolean isPaused() {
+        SoundtrackStateManager ssm = SoundtrackStateManager.getInstance();
+        return ssm.isManualPaused() || ssm.isAutoPaused();
+    }
+
+    public boolean isPlaying() {
+        SoundtrackStateManager ssm = SoundtrackStateManager.getInstance();
+        return ssm.isManualPlaying() || (ssm.isAutoPlaying() && !ssm.isAutoPaused());
+    }
 
     public VanillaTrack getCurrentTrack() { return SoundtrackStateManager.getInstance().getCurrentTrack(); }
 

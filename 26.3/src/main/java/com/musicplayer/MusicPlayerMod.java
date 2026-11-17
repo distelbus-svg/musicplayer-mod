@@ -33,7 +33,7 @@ public class MusicPlayerMod implements ClientModInitializer {
         return new KeyMapping[]{openGuiKey, playPauseKey, nextTrackKey, prevTrackKey, volumeUpKey, volumeDownKey, customVolumeKey};
     }
     private static final KeyMapping.Category CATEGORY = KeyMapping.Category.register(
-            Identifier.fromNamespaceAndPath(MOD_ID, "main")
+            Ids.rl(MOD_ID, "main")
     );
 
     // Keybindings
@@ -113,6 +113,8 @@ public class MusicPlayerMod implements ClientModInitializer {
         final boolean[] albumArtInitialized = {false};
 
         final boolean[] wasInWorld = {false};
+        // Ticks since the world was left; -1 = not counting. Lets music survive server hops (lobby/minigame switches).
+        final int[] worldLeftTicks = {-1};
 
         // Register tick event to handle keybinds
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
@@ -121,10 +123,26 @@ public class MusicPlayerMod implements ClientModInitializer {
                 AlbumArtManager.getInstance().init();
             }
 
-            // Stop music when not in a world (main menu, loading screen)
+            // Stop music after leaving a world, but not across server switches: stop right away on a
+            // menu screen, otherwise only if no world is rejoined within the 15s grace period.
             boolean inWorld = client.level != null;
-            if (!inWorld && wasInWorld[0]) {
-                manager.stop();
+            // "Keep playing in menus": never stop just because the world was left
+            if (inWorld || com.musicplayer.config.MusicPlayerConfig.getInstance().isContinueInMenus()) {
+                worldLeftTicks[0] = -1;
+            } else {
+                if (wasInWorld[0]) worldLeftTicks[0] = 0;
+                if (worldLeftTicks[0] >= 0) {
+                    worldLeftTicks[0]++;
+                    var scr = client.gui.screen();
+                    boolean atMenu = scr instanceof net.minecraft.client.gui.screens.TitleScreen
+                            || scr instanceof net.minecraft.client.gui.screens.multiplayer.JoinMultiplayerScreen
+                            || scr instanceof net.minecraft.client.gui.screens.worldselection.SelectWorldScreen
+                            || scr instanceof net.minecraft.client.gui.screens.DisconnectedScreen;
+                    if (atMenu || worldLeftTicks[0] > 300) {
+                        worldLeftTicks[0] = -1;
+                        manager.stop();
+                    }
+                }
             }
             wasInWorld[0] = inWorld;
 
@@ -134,21 +152,27 @@ public class MusicPlayerMod implements ClientModInitializer {
                     wasFocused[0] = focused;
                     MusicPlayerManager mgr = MusicPlayerManager.getInstance();
                     var cfg = com.musicplayer.config.MusicPlayerConfig.getInstance();
+                    var ssm = com.musicplayer.player.SoundtrackStateManager.getInstance();
                     if (focused) {
-                        if (mgr.getCurrentSource() == MusicPlayerManager.SongSource.MINECRAFT) {
-                            com.musicplayer.player.SoundtrackStateManager.getInstance().refocus();
-                        }
-                    } else {
-                        if (mgr.getCurrentSource() == MusicPlayerManager.SongSource.MINECRAFT) {
-                            com.musicplayer.player.SoundtrackStateManager.getInstance().unfocus();
-                        } else if (cfg.isStopWhenUnfocused()) {
-                            if (mgr.getEngine().isActive() && !mgr.getEngine().isPaused()) {
-                                mgr.getEngine().togglePause();
-                            }
+                        ssm.refocus(client.gui.screen() instanceof net.minecraft.client.gui.screens.PauseScreen);
+                    }
+                }
+                if (!focused) {
+                    // Checked every tick while unfocused, not just on the change, so nothing that starts or resumes
+                    // in the background (the game's own music, a track from another source) keeps playing.
+                    var cfg = com.musicplayer.config.MusicPlayerConfig.getInstance();
+                    if (cfg.isStopWhenUnfocused()) {
+                        MusicPlayerManager mgr = MusicPlayerManager.getInstance();
+                        com.musicplayer.player.SoundtrackStateManager.getInstance().unfocus();
+                        com.musicplayer.player.SoundtrackStateManager.getInstance().enforcePause();
+                        if (mgr.getCurrentSource() != MusicPlayerManager.SongSource.MINECRAFT
+                                && mgr.getEngine().isActive() && !mgr.getEngine().isPaused()) {
+                            mgr.getEngine().togglePause();
                         }
                     }
                 }
             }
+            SdlFileDialogs.tick();
             // Check for pending playback callbacks (from audio thread, flag-based)
             manager.getEngine().checkPendingCallback();
             // Process pending queue restore (auto-play from saved position)
@@ -161,11 +185,11 @@ public class MusicPlayerMod implements ClientModInitializer {
                 var cur = client.gui.screen();
                 if (cur == null) {
                     if (com.musicplayer.config.MusicPlayerConfig.getInstance().isOreUiEnabled()) {
-                        client.gui.setScreen(new com.musicplayer.ore.OreHomeScreen());
+                        com.musicplayer.ui.UiHost.get().open(new com.musicplayer.ore.OreHomeScreen());
                     } else {
                         client.gui.setScreen(newUi ? new MusicPlayerScreen() : new MusicPlayerScreenLegacy());
                     }
-                } else if (cur instanceof com.musicplayer.ore.OreScreen || cur instanceof MusicPlayerScreen || cur instanceof MusicPlayerScreenLegacy
+                } else if (cur instanceof com.musicplayer.host.HostScreen || cur instanceof MusicPlayerScreen || cur instanceof MusicPlayerScreenLegacy
                         || cur instanceof MusicSettingsScreen || cur instanceof UpNextScreen
                         || cur instanceof ListeningStatsScreen) {
                     client.gui.setScreen(null);

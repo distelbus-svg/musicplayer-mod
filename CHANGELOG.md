@@ -1,5 +1,11 @@
 # Changelog
 
+## v3.1.0
+
+-Added equalizer presets: 10 built-in presets (Flat, Bass Boost, Treble Boost, Vocal, Rock, Pop, Jazz, Classical, Electronic, Loudness)
+-Added a preset manager to save the current equalizer as your own preset, update, rename and delete it
+-Added data export and import in Settings: one `.melodix` file with settings, EQ presets, playlists, listening statistics and music folder
+
 ## v1.0.0 — 2026-05-26
 
 -Added Vanilla Minecraft soundtrack support — play Minecraft music directly in the mod

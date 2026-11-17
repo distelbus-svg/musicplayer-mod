@@ -1,5 +1,7 @@
 package com.musicplayer.player;
 
+import com.musicplayer.Ids;
+
 import com.musicplayer.DebugLog;
 import com.musicplayer.VanillaTrack;
 import com.musicplayer.config.MusicPlayerConfig;
@@ -85,9 +87,14 @@ public class SoundtrackStateManager {
     private long lastFailedTime;
     private long disablePlaybackUntil;
 
-    // --- Saved state for unfocus/refocus ---
-    private VanillaTrack savedManualTrack;
-    private boolean restoreOnFocus;
+    // --- Paused because the window lost focus (only with "pause when unfocused" on) ---
+    private boolean pausedByFocus;
+
+    // --- Instances we asked to stop. The sound engine may not have registered a just-started sound yet, so the
+    // stop is repeated for a short while; otherwise the old song keeps playing under the new one. ---
+    private static final long RETIRE_MS = 1500;
+    private record Retired(SoundInstance instance, long until) {}
+    private final java.util.List<Retired> retired = new java.util.ArrayList<>();
 
     // --- Auto-captured state (from MusicManager mixin) ---
     private SoundInstance autoInstance;
@@ -121,7 +128,7 @@ public class SoundtrackStateManager {
                 return;
             }
 
-            if (SoundtrackRegistry.getInstance().isVariantFailed(track.resolvedSoundId())) {
+            if (SoundtrackRegistry.getInstance().isVariantFailed(Ids.of(track.resolvedSoundId()))) {
                 DebugLog.info("playTrack: variant %s is marked failed, advancing", track.resolvedSoundId());
                 pendingFailedAdvance = true;
                 return;
@@ -185,10 +192,10 @@ public class SoundtrackStateManager {
     }
 
     private void handleFailedTrack(VanillaTrack track) {
-        Identifier id = track.resolvedSoundId() != null ? track.resolvedSoundId() : track.soundIdentifier();
+        Identifier id = track.resolvedSoundId() != null ? Ids.of(track.resolvedSoundId()) : Ids.of(track.soundIdentifier());
         DebugLog.info("handleFailedTrack: variant=%s attempt=%d", id, failedPlaybackAttempts + 1);
         lastPlayAttemptTime = 0;
-        SoundtrackRegistry.getInstance().markVariantFailed(track.resolvedSoundId());
+        SoundtrackRegistry.getInstance().markVariantFailed(Ids.of(track.resolvedSoundId()));
 
         long now = monotonicTimeMs();
         if (id.equals(lastFailedTrack) && (now - lastFailedTime) < STORM_WINDOW_MS) {
@@ -220,8 +227,8 @@ public class SoundtrackStateManager {
     private void loadPCMCache(VanillaTrack track) {
         clearPCMCache();
         if (track.resolvedSoundId() == null) return;
-        String oggPath = "sounds/" + track.resolvedSoundId().getPath() + ".ogg";
-        Identifier oggId = Identifier.fromNamespaceAndPath(track.resolvedSoundId().getNamespace(), oggPath);
+        String oggPath = "sounds/" + Ids.of(track.resolvedSoundId()).getPath() + ".ogg";
+        Identifier oggId = Ids.rl(Ids.of(track.resolvedSoundId()).getNamespace(), oggPath);
         final int token = pcmLoadToken;
         Thread t = new Thread(() -> {
             VanillaPCMCache decoded = VanillaPCMCache.decode(oggId);
@@ -252,11 +259,7 @@ public class SoundtrackStateManager {
     public void stopManual() {
         clearPCMCache();
         if (manualInstance != null) {
-            try {
-                client.getSoundManager().stop(manualInstance);
-            } catch (Exception e) {
-                // ignore
-            }
+            retire(manualInstance);
             manualInstance = null;
         }
         manualTrack = null;
@@ -264,60 +267,63 @@ public class SoundtrackStateManager {
         manualPaused = false;
         accumulatedPlayTime = 0;
         resumeStartMs = 0;
-        resetCompletionState();
-    }
-
-    /**
-     * Stop everything on window unfocus. Uses SoundManager.stop() (official API)
-     * rather than channel-level pause, which is more reliable across OS focus changes.
-     * Saves the manual track so it can be restarted on refocus.
-     */
-    public void unfocus() {
-        restoreOnFocus = manualPlaying && !manualPaused && manualTrack != null;
-        if (restoreOnFocus) {
-            savedManualTrack = manualTrack;
-        }
-
-        if (manualInstance != null) {
-            try {
-                client.getSoundManager().stop(manualInstance);
-            } catch (Exception e) { /* ignore */ }
-            manualInstance = null;
-        }
-        if (autoInstance != null) {
-            try {
-                client.getSoundManager().stop(autoInstance);
-            } catch (Exception e) { /* ignore */ }
-            clearAutoMusic();
-        }
-
-        clearPCMCache();
-        manualTrack = null;
-        manualPlaying = false;
-        manualPaused = false;
-        accumulatedPlayTime = 0;
-        resumeStartMs = 0;
-        resetCompletionState();
+        // a pending pause/fade belongs to the track that was just stopped, not to the next one
         pendingPause = false;
         fading = false;
+        ducking = false;
+        resetCompletionState();
+    }
+
+    private void retire(SoundInstance instance) {
+        try {
+            client.getSoundManager().stop(instance);
+        } catch (Exception e) { /* ignore */ }
+        retired.add(new Retired(instance, monotonicTimeMs() + RETIRE_MS));
     }
 
     /**
-     * Restore playback on window refocus. Restarts the saved manual track
-     * from the beginning only if it was actively playing (not user-paused) before unfocus.
+     * The window lost focus with "pause when unfocused" on: pause what Melodix is playing and remember that we did,
+     * so a song the person paused themselves stays paused.
      */
-    public void refocus() {
-        if (restoreOnFocus && savedManualTrack != null) {
-            playTrack(savedManualTrack);
+    public void unfocus() {
+        boolean active = (manualPlaying && !manualPaused && !pendingPause) || (autoInstance != null && !autoPaused);
+        if (active) {
+            pauseImmediate();
+            pausedByFocus = true;
         }
-        restoreOnFocus = false;
-        savedManualTrack = null;
+    }
+
+    /**
+     * The window regained focus: resume only what the focus loss paused. With the pause menu open the menu itself
+     * resumes the music when it closes.
+     */
+    public void refocus(boolean pauseScreenOpen) {
+        boolean resume = pausedByFocus;
+        pausedByFocus = false;
+        if (resume && !pauseScreenOpen) resumeImmediate();
     }
 
     // ─── Real pause/resume (via SoundThreadExecutor) ───
 
+    /**
+     * Re-assert pause on anything we think is paused. The game resumes all channels itself in a few places
+     * (screen changes, device reloads), which un-pauses our tracks behind our back.
+     */
+    public void enforcePause() {
+        if (manualInstance != null && manualPaused) soundExecutor.pause(manualInstance);
+        if (autoInstance != null && autoPaused) soundExecutor.pause(autoInstance);
+    }
+
+    /** Pause/resume a game-owned instance we never captured (e.g. the game's own music before capture). */
+    public void pauseForeign(SoundInstance inst) { if (inst != null) soundExecutor.pause(inst); }
+    public void resumeForeign(SoundInstance inst) { if (inst != null) soundExecutor.resume(inst, volume); }
+
     public void togglePause() {
-        if (manualInstance == null || manualTrack == null) return;
+        if (manualInstance == null || manualTrack == null) {
+            // a track the game started by itself
+            toggleAutoPause();
+            return;
+        }
         if (manualPaused) {
             resumeManual();
         } else {
@@ -400,6 +406,8 @@ public class SoundtrackStateManager {
         this.volume = Math.max(0, Math.min(1, vol));
         if (!manualPaused && manualInstance != null) {
             soundExecutor.setVolume(manualInstance, volume);
+        } else if (manualInstance == null && autoInstance != null && !autoPaused) {
+            soundExecutor.setVolume(autoInstance, volume);
         }
     }
 
@@ -416,7 +424,16 @@ public class SoundtrackStateManager {
         if (soundEvent == null) return;
         this.autoInstance = instance;
         Identifier id = soundEvent.location();
-        this.autoTrack = SoundtrackRegistry.getInstance().getTrack(id);
+        // The event maps to several files (e.g. music.game -> Aria Math, Dry Hands, ...); the instance knows which
+        // one the game actually picked, so look that variant up instead of taking the event's first one.
+        VanillaTrack picked = null;
+        try {
+            var snd = instance.getSound();
+            if (snd != null && snd.getLocation() != null) {
+                picked = SoundtrackRegistry.getInstance().getTrack(snd.getLocation());
+            }
+        } catch (Throwable ignored) { }
+        this.autoTrack = picked != null ? picked : SoundtrackRegistry.getInstance().getTrack(id);
         this.autoStartMs = monotonicTimeMs();
         this.autoPaused = false;
         this.autoPausedAtMs = 0;
@@ -473,11 +490,11 @@ public class SoundtrackStateManager {
      */
     public void seekManual(float seconds) {
         if (!manualPlaying || manualTrack == null || manualInstance == null) return;
-        Identifier variantId = manualTrack.resolvedSoundId();
+        Identifier variantId = Ids.of(manualTrack.resolvedSoundId());
         if (variantId == null) return;
 
         String oggPath = "sounds/" + variantId.getPath() + ".ogg";
-        Identifier oggId = Identifier.fromNamespaceAndPath(variantId.getNamespace(), oggPath);
+        Identifier oggId = Ids.rl(variantId.getNamespace(), oggPath);
 
         DebugLog.info("seekManual: track=\"%s\" seekTo=%.1fs variant=%s",
             manualTrack.title(), seconds, variantId);
@@ -560,6 +577,8 @@ public class SoundtrackStateManager {
         return isManualPlaying() || isAutoPlaying();
     }
 
+    public SoundInstance getAutoInstance() { return autoInstance; }
+
     public boolean isAnyPaused() {
         return manualPaused || autoPaused;
     }
@@ -596,6 +615,16 @@ public class SoundtrackStateManager {
     public void tick() {
         try {
             tickFade();
+
+            if (!retired.isEmpty()) {
+                long now = monotonicTimeMs();
+                retired.removeIf(r -> {
+                    try {
+                        client.getSoundManager().stop(r.instance());
+                    } catch (Exception e) { /* ignore */ }
+                    return now >= r.until();
+                });
+            }
 
             // Deferred advance for failed tracks (prevents recursive playTrack)
             if (pendingFailedAdvance) {
@@ -821,10 +850,10 @@ public class SoundtrackStateManager {
     private static SoundInstance createTrackInstance(VanillaTrack track) {
         if (track == null) return null;
         if (track.resolvedSoundId() != null
-            && SoundtrackRegistry.getInstance().hasMultipleVariants(track.soundIdentifier())) {
-            return new FixedSoundInstance(track.soundIdentifier(), track.resolvedSoundId());
+            && SoundtrackRegistry.getInstance().hasMultipleVariants(Ids.of(track.soundIdentifier()))) {
+            return new FixedSoundInstance(Ids.of(track.soundIdentifier()), Ids.of(track.resolvedSoundId()));
         }
-        return createMusicInstance(track.soundIdentifier());
+        return createMusicInstance(Ids.of(track.soundIdentifier()));
     }
 
     /**
@@ -907,7 +936,7 @@ public class SoundtrackStateManager {
             }
 
             Identifier loc = sound.getLocation();
-            Identifier oggRes = Identifier.fromNamespaceAndPath(loc.getNamespace(),
+            Identifier oggRes = Ids.rl(loc.getNamespace(),
                 "sounds/" + loc.getPath() + ".ogg");
             var resource = mc.getResourceManager().getResource(oggRes);
             return resource.isPresent();

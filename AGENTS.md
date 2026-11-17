@@ -1,5 +1,7 @@
 # Melodix Music Player
 
+Start with `ARCHITECTURE.md` (module layout, ports, playback, addon API). This file holds build/deploy notes, porting notes and the bug log.
+
 ## Build (all versions)
 ```sh
 ./gradlew build         # builds all versions in parallel
@@ -13,28 +15,29 @@ JARs are output to each subproject's `build/libs/` directory:
 - `26.1.2/build/libs/`
 - `Backports/*/build/libs/`
 
-## Syncing source across versions
-Use `sync-source.sh` to copy a file from 26.3 to all other versions that already have it:
-```sh
-./sync-source.sh src/main/java/com/musicplayer/AudioEngine.java
+## Multi-version structure (current)
+Shared code lives once, outside the version folders:
+- `core/` — Minecraft-free logic (audio, config, playlists, EQ, exporter, `MusicPlayerManager`). Java 17, no Minecraft/Fabric imports. Talks to the game only through the ports in `core/.../port/` (`Ports`, `HostPort`, `VanillaPort`, `SoundtrackPort`, `TrackRegistryPort`, `ArtPort`).
+- `ui/` — the Ore UI and HUD, also Minecraft-free. Draws through `Gfx`, reaches the game through `UiHost`, text fields through `UiTextField`. Addon screens extend `OreScreen`.
+- Each version project (`26.3`, `Backports/1.21.11`, `Backports/1.21.1`, `Backports/1.20.1`) adds `core/src/main/java` and `ui/src/main/java` as extra `srcDir`s and only holds the adapter: `McBootstrap` (implements the ports), `MusicPlayerMod`, sound/texture glue (`player/*`, `AlbumArtManager`, `VanillaMusicPlayer`), mixins, and `host/*` (`GfxImpl`, `HostScreen`, `EditBoxField`, `McUiHost`).
+- `./gradlew :core:compileJava :ui:compileJava` compiles the shared code on its own and fails if it imports Minecraft.
+- Backports get no classic UI (Ore UI only). The classic screens exist only in 26.x.
+
+### Updating a backport
+Change shared behaviour in `core/` or `ui/` (nothing else to do, build all versions). Change the sound glue or `MusicPlayerMod` in `26.3`, then regenerate each backport adapter:
 ```
-Only copies to versions where the target file already exists. To add a new file, create it manually first.
-**Note:** 26.1.2 uses a different screen API (`Minecraft.screen` / `Minecraft.setScreen`) vs 26.3 (`Minecraft.gui.screen()` / `Minecraft.gui.setScreen`), so files with screen-related calls may need manual adjustment after sync.
+python3 tools/port_adapter.py 1.21.11   # also 1.21.1, 1.20.1
+./gradlew :Backports:1.21.11:build
+```
+The tool wipes and rebuilds `Backports/<v>/src/main/java`, so never edit adapter code there by hand: put the API difference into `tools/port_adapter.py`. `Backports/` is gitignored.
 
-## Volume fix (cross-version)
-Three changes needed in each backport:
-1. **AudioEngine.play()** — `primary.fadeVolume = this.volume;` after `primary = new PlaybackSlot();`
-2. **SoundtrackStateManager.tick()** — when `active && !confirmedActive`, call `soundExecutor.setVolume(manualInstance, volume)` if `volume < 1.0f`
-3. **MusicPlayerManager()** — `SoundtrackStateManager.getInstance().setVolume(config.getVolume());` in constructor
-
-See `26.3` for reference implementation. Backports 1.21.4, 1.20.1, 1.19.2, 1.16.5 share the same PlaybackSlot-based AudioEngine. 1.18.2 has a simpler engine and different SSM.
+Frozen (not maintained, may not compile): `26.1.2`, `26.2`, `Backports/1.21.4`, `1.19.2`, `1.18.2`, `1.16.5`.
 
 ## Project Structure
 - `26.3/` — latest Minecraft version, **main development version** (uses SDL instead of GLFW; see 26.3 porting notes)
 - `26.2/` — previous Minecraft version (GLFW + tinyfd)
 - `26.1.2/` — previous Minecraft version (unobfuscated, `net.fabricmc.fabric-loom`)
 - `Backports/*/` — each backport version (uses `net.fabricmc.fabric-loom-remap`)
-- `sync-source.sh` — copy a source file from 26.3 to matching files in other versions
 - `reference/` — reference mods (overtune-1.0.0.jar), icon.png
 - Config lives at `.minecraft/config/musicplayer.json`
 - Album art cache at `.minecraft/config/musicplayer/albumart/`
@@ -76,22 +79,6 @@ Minecraft 26.3 replaced GLFW with SDL. `org.lwjgl.glfw.*` and `org.lwjgl.util.ti
 - 1.19.2 → `Fabulously Optimized(4)` (PoseStack, old Button constructor)
 - 1.18.2 → `Fabulously Optimized(5)` (PoseStack, TextComponent)
 - 1.16.5 → `Fabulously Optimized(6)` (PoseStack, addButton, TextFieldWidget)
-
-## Sync-source notes
-After running `sync-source.sh`, you MUST adapt each backport's source files — the 26.3 API differs significantly from older versions. Common adaptations:
-- `GuiGraphicsExtractor` → `GuiGraphics` (1.21.x) or `PoseStack` (≤1.20.1)
-- `extractRenderState` → `render`
-- `gui.setScreen` → `minecraft.setScreen`
-- `MouseButtonEvent` → `mouseClicked(double,double,int)` etc.
-- `graphics.text(...)` → `graphics.drawString(...)` (1.21.x) or `font.draw(matrixStack, ...)` (≤1.20.1)
-- `graphics.fill(...)` → `fill(matrixStack, ...)` (≤1.20.1)
-- `graphics.centeredText(...)` → manual centering
-- `Button.builder(...)` → `new Button(x,y,w,h,text,handler)` (≤1.19.2)
-- `Component.literal(...)` → `new TextComponent(...)` (≤1.18.2)
-- `addRenderableWidget(...)` → `addButton(...)` (1.16.5)
-- `removeWidget(...)` → `children.remove(...)` (1.16.5/1.18.2)
-- `mouseScrolled(double,double,double,double)` → `mouseScrolled(double,double,double)` (≤1.20.1)
-- `EditBox` → `TextFieldWidget` + different imports (1.16.5)
 
 ## Fixed Bugs
 - **Game freeze on Creator (Music Box) / Comforting Memories**: Root cause was `NotificationManager.renderPanel()` rendering `♪` (U+266A), which triggered a Minecraft font fallback deadlock on macOS. Fixed by removing Unicode special characters and using char-count text truncation instead of `font.width()` calls. The freeze was never in the sound engine.

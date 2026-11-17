@@ -12,6 +12,16 @@ loom {
     }
 }
 
+// Shared, Minecraft-free code (see core/)
+sourceSets {
+    main {
+        java {
+            srcDir rootProject.file('core/src/main/java')
+            srcDir rootProject.file('ui/src/main/java')
+        }
+    }
+}
+
 repositories {
     mavenCentral()
 }

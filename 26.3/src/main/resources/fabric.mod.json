@@ -5,7 +5,7 @@
   "name": "Melodix Music Player",
   "description": "Play your own MP3/WAV files or Minecraft soundtrack tracks in-game with a full GUI, mini player, visualizer, and album art. Client-side only, Fabric.",
   "authors": [
-    "User"
+    "imac2007yt"
   ],
   "license": "MIT",
   "environment": "client",

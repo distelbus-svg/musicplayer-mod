@@ -1,5 +1,7 @@
 package com.musicplayer.player;
 
+import com.musicplayer.Ids;
+
 import com.musicplayer.DebugLog;
 import com.musicplayer.TrackMetadata;
 import com.musicplayer.VanillaTrack;
@@ -205,7 +207,7 @@ public class SoundtrackRegistry {
             seenPaths.add(resolvedKey);
             if (trackCache.containsKey(resolvedKey)) return;
 
-            Identifier oggRes = Identifier.fromNamespaceAndPath(resolvedLoc.getNamespace(),
+            Identifier oggRes = Ids.rl(resolvedLoc.getNamespace(),
                 "sounds/" + resolvedLoc.getPath() + ".ogg");
             if (mc.getResourceManager().getResource(oggRes).isEmpty()) {
                 DebugLog.info("registerVariant: OGG not found: %s", oggRes);
@@ -226,7 +228,7 @@ public class SoundtrackRegistry {
             DebugLog.info("registerVariant: %s -> title=\"%s\" artist=\"%s\" album=\"%s\" duration=%ds event=%s",
                 resolvedKey, title, artist, album, duration, eventId);
 
-            VanillaTrack track = new VanillaTrack(resolvedKey, title, artist, album, duration, albumKey(album), eventId, resolvedLoc);
+            VanillaTrack track = new VanillaTrack(resolvedKey, title, artist, album, duration, albumKey(album), Ids.str(eventId), Ids.str(resolvedLoc));
             trackCache.put(resolvedKey, track);
             eventToVariants.computeIfAbsent(eventId, k -> new ArrayList<>()).add(resolvedKey);
         } catch (Exception e) {
@@ -240,6 +242,8 @@ public class SoundtrackRegistry {
         durationCache.clear();
         eventToVariants.clear();
     }
+
+    public int trackCount() { return trackCache.size(); }
 
     public List<VanillaTrack> getAllTracks() {
         return List.copyOf(trackCache.values());

@@ -13,10 +13,16 @@ public class FlatButton extends AbstractWidget {
     private static final int BORDER = 1;
     private final Runnable onClick;
     private boolean active = false;
+    private int labelDy = 0;
 
     public FlatButton(int x, int y, int width, int height, Component message, Runnable onClick) {
         super(x, y, width, height, message);
         this.onClick = onClick;
+    }
+
+    /** Nudges the label vertically; glyphs from the icon font have different top edges, so some need a pixel. */
+    public void setLabelOffsetY(int dy) {
+        this.labelDy = dy;
     }
 
     public void setActive(boolean active) {
@@ -31,6 +37,18 @@ public class FlatButton extends AbstractWidget {
         return ColorTheme.get(MusicPlayerManager.getInstance().getConfig().getThemeId());
     }
 
+    /**
+     * Centres the label on its visible width. Font.width() includes a 1px trailing gap after the last glyph,
+     * which pushed labels (especially single-glyph icons) half a pixel to the left.
+     */
+    private void drawLabel(GuiGraphicsExtractor graphics, int color) {
+        var font = Minecraft.getInstance().font;
+        int visibleW = Math.max(0, font.width(getMessage()) - 1);
+        int x = getX() + (getWidth() - visibleW) / 2;
+        int y = getY() + (getHeight() - 8) / 2 + labelDy;
+        graphics.text(font, getMessage(), x, y, color, true);
+    }
+
     @Override
     protected void extractWidgetRenderState(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float partialTick) {
         ColorTheme th = theme();
@@ -39,12 +57,12 @@ public class FlatButton extends AbstractWidget {
         if (active) {
             graphics.fill(getX(), getY(), getX() + getWidth(), getY() + getHeight(), th.accent());
             graphics.fill(getX() + BORDER, getY() + BORDER, getX() + getWidth() - BORDER, getY() + getHeight() - BORDER, th.panelBg());
-            graphics.centeredText(Minecraft.getInstance().font, getMessage(), getX() + getWidth() / 2, getY() + (getHeight() - 8) / 2, th.accent());
+            drawLabel(graphics, th.accent());
         } else {
             int border = hovered ? th.accent() : th.dimText();
             graphics.fill(getX(), getY(), getX() + getWidth(), getY() + getHeight(), border);
             graphics.fill(getX() + BORDER, getY() + BORDER, getX() + getWidth() - BORDER, getY() + getHeight() - BORDER, th.panelBg());
-            graphics.centeredText(Minecraft.getInstance().font, getMessage(), getX() + getWidth() / 2, getY() + (getHeight() - 8) / 2, th.text());
+            drawLabel(graphics, th.text());
         }
     }
 

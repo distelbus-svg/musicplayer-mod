@@ -70,6 +70,7 @@ public class MusicPlayerScreen extends Screen {
     private final List<FlatButton> editRemoveButtons = new ArrayList<>();
     private PlaylistListWidget playlistList;
     private int settingsScrollY = 0;
+    private boolean draggingSettingsScrollbar = false;
     private String settingsFilter = "";
     private EditBox settingsSearchBox;
     private final List<AbstractWidget> panelWidgets = new ArrayList<>();
@@ -111,6 +112,23 @@ public class MusicPlayerScreen extends Screen {
 
     private boolean shadow() {
         return theme().textHasShadow();
+    }
+
+    private boolean keepSizesOnRebuild = false;
+
+    /**
+     * Re-lays out every widget (progress bar, search box, open panel, ...) at the current sidebar/hero sizes
+     * without closing the player. Keeps the search text and the open panel.
+     */
+    private void relayoutNow() {
+        boolean hadSearchFocus = searchBox != null && getFocused() == searchBox;
+        keepSizesOnRebuild = true;
+        try {
+            rebuildWidgets(); // init() restores the search text and the open panel
+        } finally {
+            keepSizesOnRebuild = false;
+        }
+        if (!hadSearchFocus) clearFocus();
     }
 
     private void updateLayout() {
@@ -161,6 +179,24 @@ public class MusicPlayerScreen extends Screen {
         return this.minecraft != null && this.minecraft.options != null && this.minecraft.options.fullscreen().get();
     }
 
+    private Runnable pendingDialog;
+    private int pendingDialogFrames;
+
+    /**
+     * Native file dialogs don't show over a fullscreen window. When fullscreen, leave it and open the dialog
+     * once the window has settled (same approach as the OreUI screens); otherwise open it right away.
+     */
+    private void runDialog(Runnable open) {
+        if (!isFullscreen()) {
+            open.run();
+            return;
+        }
+        com.musicplayer.hud.NotificationManager.showSystem("Leaving fullscreen to open the file browser");
+        com.musicplayer.ui.UiHost.get().setFullscreen(false);
+        pendingDialog = open;
+        pendingDialogFrames = 45;
+    }
+
     private void updateResizeCursor(boolean show) {
         if (show == cursorIsResize) return;
         cursorIsResize = show;
@@ -175,6 +211,7 @@ public class MusicPlayerScreen extends Screen {
 
     @Override
     protected void init() {
+        String prevQuery = searchBox != null ? searchBox.getValue() : "";
         if (!manager.isLoaded()) {
             manager.reloadLibraryFromDisk();
         }
@@ -182,15 +219,20 @@ public class MusicPlayerScreen extends Screen {
         float guiScale = Math.min(1f, this.width / 960f);
         topBarH = Math.max(16, (int)(26 * guiScale));
         bottomBarH = Math.max(34, (int)(54 * guiScale));
-        int tbSize = Math.max(12, (int)(18 * guiScale));
+        // Odd size so 1px/5px/7px icon glyphs can sit exactly in the middle of the button
+        int tbSize = Math.max(12, (int)(18 * guiScale)) | 1;
         int searchH = Math.max(12, (int)(16 * guiScale));
         MusicPlayerConfig cfg = manager.getConfig();
-        if (cfg.isRememberResizing() && cfg.getSidebarWidth() > 0) {
+        if (keepSizesOnRebuild && sidebarW > 0) {
+            // rebuilding right after a drag: keep exactly what the user just set
+        } else if (cfg.isRememberResizing() && cfg.getSidebarWidth() > 0) {
             sidebarW = Math.min(cfg.getSidebarWidth(), (int)(190 * guiScale));
         } else {
-            sidebarW = Math.max((int)(140 * guiScale), Math.min((int)(190 * guiScale), this.width * 14 / 100));
+            sidebarW = Math.max((int)(150 * guiScale), Math.min((int)(190 * guiScale), this.width * 20 / 100));
         }
-        if (cfg.isRememberResizing() && cfg.getHeroWidth() > 0) {
+        if (keepSizesOnRebuild && heroW > 0) {
+            // see above
+        } else if (cfg.isRememberResizing() && cfg.getHeroWidth() > 0) {
             heroW = Math.min(cfg.getHeroWidth(), (int)(280 * guiScale));
         } else {
             heroW = Math.max((int)(200 * guiScale), Math.min((int)(280 * guiScale), this.width * 26 / 100));
@@ -225,6 +267,8 @@ public class MusicPlayerScreen extends Screen {
         int tbY = Math.max(2, (int)(4 * guiScale));
         int tbX = this.width - tbSize - 6;
         closeBtn = new FlatButton(tbX, tbY, tbSize, tbSize, Component.literal("X"), this::onClose);
+        closeBtn.setLabelOffsetY(1);
+        closeBtn.setTooltip(Tooltip.create(Component.literal("Close")));
         addRenderableWidget(closeBtn);
         tbX -= tbSize + 3;
         settingsBtn = new FlatButton(tbX, tbY, tbSize, tbSize, Component.literal("\u2699"), () -> {
@@ -234,6 +278,7 @@ public class MusicPlayerScreen extends Screen {
                 setPanelMode(PanelMode.SETTINGS);
             }
         });
+        settingsBtn.setTooltip(Tooltip.create(Component.literal("Settings")));
         addRenderableWidget(settingsBtn);
         tbX -= tbSize + 3;
         upNextBtn = new FlatButton(tbX, tbY, tbSize, tbSize, Component.literal("\u22EE"), () -> {
@@ -243,6 +288,7 @@ public class MusicPlayerScreen extends Screen {
                 setPanelMode(PanelMode.UP_NEXT);
             }
         });
+        upNextBtn.setTooltip(Tooltip.create(Component.literal("Up next (queue)")));
         addRenderableWidget(upNextBtn);
         tbX -= tbSize + 3;
         playlistsBtn = new FlatButton(tbX, tbY, tbSize, tbSize, Component.literal("\u2630"), () -> {
@@ -252,6 +298,8 @@ public class MusicPlayerScreen extends Screen {
                 setPanelMode(PanelMode.PLAYLISTS);
             }
         });
+        playlistsBtn.setLabelOffsetY(1);
+        playlistsBtn.setTooltip(Tooltip.create(Component.literal("Playlists")));
         addRenderableWidget(playlistsBtn);
 
         int sidebarH = contentBottom - contentTop;
@@ -301,18 +349,22 @@ public class MusicPlayerScreen extends Screen {
 
         prevButton = new FlatButton(clusterLeft, btnY, btnSize, btnSize,
                 Component.literal("\u23EE"), () -> manager.previousTrack());
+        prevButton.setTooltip(Tooltip.create(Component.literal("Previous track")));
         addRenderableWidget(prevButton);
         playPauseButton = new FlatButton(clusterLeft + (btnSize + 4), btnY, btnSize, btnSize,
                 Component.literal("\u25B6"), () -> manager.togglePlayPause());
+        playPauseButton.setTooltip(Tooltip.create(Component.literal("Play / Pause")));
         addRenderableWidget(playPauseButton);
         nextButton = new FlatButton(clusterLeft + (btnSize + 4) * 2, btnY, btnSize, btnSize,
                 Component.literal("\u23ED"), () -> manager.nextTrack());
+        nextButton.setTooltip(Tooltip.create(Component.literal("Next track")));
         addRenderableWidget(nextButton);
         shuffleButton = new FlatButton(clusterLeft + (btnSize + 4) * 3, btnY, btnSize, btnSize,
                 Component.literal("\u21C6"), () -> {
             PlaybackMode mode = manager.getConfig().getPlaybackMode();
             manager.setPlaybackMode(mode == PlaybackMode.SHUFFLE ? PlaybackMode.SEQUENTIAL : PlaybackMode.SHUFFLE);
         });
+        shuffleButton.setTooltip(Tooltip.create(Component.literal("Shuffle")));
         addRenderableWidget(shuffleButton);
         repeatButton = new FlatButton(clusterLeft + (btnSize + 4) * 4, btnY, btnSize, btnSize,
                 Component.literal("\u21BB"), () -> {
@@ -325,6 +377,7 @@ public class MusicPlayerScreen extends Screen {
                 manager.setPlaybackMode(PlaybackMode.REPEAT_ALL);
             }
         });
+        repeatButton.setTooltip(Tooltip.create(Component.literal("Repeat")));
         addRenderableWidget(repeatButton);
         int speedBtnX = clusterLeft + (btnSize + 4) * 5;
         speedButton = new FlatButton(speedBtnX, btnY, speedBtnWidth, btnSize,
@@ -343,7 +396,7 @@ public class MusicPlayerScreen extends Screen {
         int artBtnSize = Math.max(32, (int)(48 * guiScale));
         assignArtButton = new FlatButton(heroLeft + 8, contentTop + 8, artBtnSize, artBtnSize,
                 Component.literal("+"), this::assignAlbumArt);
-        assignArtButton.setTooltip(Tooltip.create(Component.literal("Assign album art (PNG)")));
+        assignArtButton.setTooltip(Tooltip.create(Component.literal("Set custom album art for the current song (PNG)")));
         addRenderableWidget(assignArtButton);
 
         int setupW = Math.min(200, middleWidth - 60);
@@ -361,8 +414,7 @@ public class MusicPlayerScreen extends Screen {
         addRenderableWidget(folderSetupBox);
 
         folderBrowseBtn = new FlatButton(groupX + setupW + gap, setupY, btnW, 16,
-                Component.literal("Browse"), () -> {
-            if (isFullscreen()) return;
+                Component.literal("Browse"), () -> runDialog(() -> {
             String initial = manager.getConfig().getMusicFolderPath();
             if (initial.isEmpty()) initial = System.getProperty("user.home");
             SdlFileDialogs.selectFolder("Select music folder", initial, result -> {
@@ -373,10 +425,13 @@ public class MusicPlayerScreen extends Screen {
                     refreshSongList();
                 }
             });
-        });
+        }));
         folderBrowseBtn.visible = false;
         addRenderableWidget(folderBrowseBtn);
 
+        // init() also runs on window resize and when leaving fullscreen: bring back the search text and the open panel
+        if (!prevQuery.isEmpty()) searchBox.setValue(prevQuery);
+        if (panelMode != PanelMode.NONE) refreshPanel();
     }
 
     private void setPanelMode(PanelMode mode) {
@@ -450,8 +505,7 @@ public class MusicPlayerScreen extends Screen {
             editingPlaylist = p;
             setPanelMode(PanelMode.PLAYLIST_EDIT);
         };
-        PlaylistListWidget.PlaylistAction exportAction = p -> {
-            if (isFullscreen()) return;
+        PlaylistListWidget.PlaylistAction exportAction = p -> runDialog(() -> {
             String initial = p.getName().replaceAll("[^a-zA-Z0-9.-]", "_") + ".json";
             SdlFileDialogs.saveFile("Export Playlist", initial, result -> {
                 if (result != null) {
@@ -460,17 +514,25 @@ public class MusicPlayerScreen extends Screen {
                         com.musicplayer.hud.NotificationManager.showSystem("Exported: " + p.getName());
                     } catch (Exception e) {
                         e.printStackTrace();
+                        com.musicplayer.hud.NotificationManager.showSystem("Export failed: " + e.getMessage());
                     }
                 }
             });
-        };
+        });
 
-        deleteAction[0] = p -> {
-            PlaylistManager.getInstance().deletePlaylist(p);
-            playlistList.refreshEntries(playAction, editAction, deleteAction[0], exportAction);
+        // Single refresh path so the list, the reorder arrows and the sidebar always change together, instantly.
+        var moveActions = new PlaylistListWidget.PlaylistAction[2];
+        Runnable refreshLists = () -> {
+            playlistList.refreshEntries(playAction, editAction, deleteAction[0], exportAction, moveActions[0], moveActions[1]);
             sidebar.refresh();
         };
-        playlistList.refreshEntries(playAction, editAction, deleteAction[0], exportAction);
+        moveActions[0] = p -> { PlaylistManager.getInstance().movePlaylistUp(p); refreshLists.run(); };
+        moveActions[1] = p -> { PlaylistManager.getInstance().movePlaylistDown(p); refreshLists.run(); };
+        deleteAction[0] = p -> {
+            PlaylistManager.getInstance().deletePlaylist(p);
+            refreshLists.run();
+        };
+        refreshLists.run();
         addRenderableWidget(playlistList);
         panelWidgets.add(playlistList);
 
@@ -486,15 +548,13 @@ public class MusicPlayerScreen extends Screen {
                 Playlist p = new Playlist(name);
                 PlaylistManager.getInstance().savePlaylist(p);
                 newNameBox.setValue("");
-                playlistList.refreshEntries(playAction, editAction, deleteAction[0], exportAction);
-                sidebar.refresh();
+                refreshLists.run();
             }
         });
         addRenderableWidget(createBtn);
         panelWidgets.add(createBtn);
 
-        FlatButton importBtn = new FlatButton(middleLeft + 200, contentBottom - 22, 50, 16, Component.literal("Import"), () -> {
-            if (isFullscreen()) return;
+        FlatButton importBtn = new FlatButton(middleLeft + 200, contentBottom - 22, 50, 16, Component.literal("Import"), () -> runDialog(() -> {
             String initialPath = manager.getConfig().getMusicFolderPath();
             if (initialPath.isEmpty()) initialPath = System.getProperty("user.home");
             SdlFileDialogs.openFile("Import Playlist", initialPath, result -> {
@@ -513,13 +573,12 @@ public class MusicPlayerScreen extends Screen {
                     }
                     if (imported != null && !imported.getSongs().isEmpty()) {
                         PlaylistManager.getInstance().savePlaylist(imported);
-                        playlistList.refreshEntries(playAction, editAction, deleteAction[0], exportAction);
-                        sidebar.refresh();
+                        refreshLists.run();
                         com.musicplayer.hud.NotificationManager.showSystem("Imported: " + imported.getName() + " (" + imported.getSongs().size() + " songs)");
                     }
                 }
             });
-        });
+        }));
         addRenderableWidget(importBtn);
         panelWidgets.add(importBtn);
     }
@@ -559,8 +618,7 @@ public class MusicPlayerScreen extends Screen {
         panelWidgets.add(checkboxList);
 
         FlatButton setCoverBtn = new FlatButton(middleLeft + 10, contentBottom - 22, 70, 18,
-                Component.literal("Set Cover"), () -> {
-            if (isFullscreen()) return;
+                Component.literal("Set Cover"), () -> runDialog(() -> {
             String initial = editingPlaylist.getCustomCoverPath();
             if (initial == null || initial.isEmpty()) {
                 initial = manager.getConfig().getMusicFolderPath();
@@ -575,7 +633,8 @@ public class MusicPlayerScreen extends Screen {
                     }
                 }
             });
-        });
+        }));
+        setCoverBtn.setTooltip(Tooltip.create(Component.literal("Pick a PNG image to use as this playlist's cover")));
         addRenderableWidget(setCoverBtn);
         panelWidgets.add(setCoverBtn);
 
@@ -585,6 +644,7 @@ public class MusicPlayerScreen extends Screen {
             editingPlaylist.setCachedCoverId(null);
             PlaylistManager.getInstance().savePlaylist(editingPlaylist);
         });
+        resetCoverBtn.setTooltip(Tooltip.create(Component.literal("Remove the custom cover and use the automatic one")));
         addRenderableWidget(resetCoverBtn);
         panelWidgets.add(resetCoverBtn);
 
@@ -785,9 +845,8 @@ public class MusicPlayerScreen extends Screen {
             srcY += 16;
         }
         FlatButton plusBtn = new FlatButton(srcX, srcY, plusW, 14,
-                Component.literal("+"), () -> {
+                Component.literal("+"), () -> runDialog(() -> {
             try {
-                if (isFullscreen()) return;
                 String initial = manager.getConfig().getMusicFolderPath();
                 if (initial.isEmpty()) initial = System.getProperty("user.home");
                 SdlFileDialogs.selectFolder("Select a music folder", initial, result -> {
@@ -811,7 +870,8 @@ public class MusicPlayerScreen extends Screen {
             } catch (Exception e) {
                 e.printStackTrace();
             }
-        });
+        }));
+        plusBtn.setTooltip(Tooltip.create(Component.literal("Add another music folder as a song source")));
         addRenderableWidget(plusBtn);
         panelWidgets.add(plusBtn);
         editSourceButtons.add(plusBtn);
@@ -860,6 +920,11 @@ public class MusicPlayerScreen extends Screen {
 
     @Override
     public void extractRenderState(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float partialTick) {
+        if (pendingDialog != null && --pendingDialogFrames <= 0) {
+            Runnable r = pendingDialog;
+            pendingDialog = null;
+            r.run();
+        }
         ColorTheme th = theme();
         boolean isMc = manager.getCurrentSource() == MusicPlayerManager.SongSource.MINECRAFT;
 
@@ -1028,8 +1093,9 @@ public class MusicPlayerScreen extends Screen {
             float scrollFrac = (float) -settingsScrollY / (totalH - visH);
             int sbX = heroLeft - 8;
             int thumbY = clipTop + (int) (scrollFrac * (visH - thumbH));
-            graphics.fill(sbX, clipTop, sbX + 4, clipBottom, 0x40000000);
-            graphics.fill(sbX, thumbY, sbX + 4, thumbY + thumbH, 0x80808080);
+            graphics.fill(sbX - 1, clipTop - 1, sbX + 5, clipBottom + 1, th.dimText());
+            graphics.fill(sbX, clipTop, sbX + 4, clipBottom, 0xFF101010);
+            graphics.fill(sbX, thumbY, sbX + 4, thumbY + thumbH, 0xFFA0A0A0);
         }
 
         int renderY = y + settingsScrollY;
@@ -1141,6 +1207,7 @@ public class MusicPlayerScreen extends Screen {
         m.put("playbackMode", "Playback order: sequential, shuffle, repeat all, repeat one");
         m.put("playbackSpeed", "Playback speed multiplier (0.5\u00D7 to 2\u00D7)");
         m.put("stopWhenUnfocused", "Pause playback when Minecraft isn't the active window");
+        m.put("continueInMenus", "Keep music playing in the main menu and the world and server lists instead of stopping when you leave a world");
         m.put("pauseOnOpen", "Pause the game in single-player when the music player is open");
         m.put("pauseOnPauseScreen", "Pause music when the game pause screen is open");
         m.put("newUiEnabled", "Use the redesigned UI layout");
@@ -1193,6 +1260,7 @@ public class MusicPlayerScreen extends Screen {
         pb.add(new Object[]{"playbackMode", "Mode", "cycle", c.getPlaybackMode().name()});
         if (!isMc) pb.add(new Object[]{"playbackSpeed", "Speed", "cycle", formatSpeed(c.getPlaybackSpeed())});
         pb.add(new Object[]{"stopWhenUnfocused", "Unfocused", "toggle", c.isStopWhenUnfocused() ? "ON" : "OFF"});
+        pb.add(new Object[]{"continueInMenus", "Play in Menus", "toggle", c.isContinueInMenus() ? "ON" : "OFF"});
         pb.add(new Object[]{"pauseOnOpen", "Pause SP", "toggle", c.isPauseOnOpen() ? "ON" : "OFF"});
         pb.add(new Object[]{"pauseOnPauseScreen", "Pause Screen", "toggle", c.isPauseOnPauseScreen() ? "ON" : "OFF"});
         pb.add(new Object[]{"oreUiEnabled", "OreUI design", "toggle", c.isOreUiEnabled() ? "ON" : "OFF"});
@@ -1305,11 +1373,12 @@ public class MusicPlayerScreen extends Screen {
                 manager.getEngine().setPlaybackSpeed(c.getPlaybackSpeed());
             }
             case "stopWhenUnfocused" -> c.setStopWhenUnfocused(!c.isStopWhenUnfocused());
+            case "continueInMenus" -> c.setContinueInMenus(!c.isContinueInMenus());
             case "pauseOnOpen" -> c.setPauseOnOpen(!c.isPauseOnOpen());
             case "pauseOnPauseScreen" -> c.setPauseOnPauseScreen(!c.isPauseOnPauseScreen());
             case "oreUiEnabled" -> {
                 c.setOreUiEnabled(!c.isOreUiEnabled());
-                if (c.isOreUiEnabled()) this.minecraft.gui.setScreen(new com.musicplayer.ore.OreHomeScreen());
+                if (c.isOreUiEnabled()) com.musicplayer.ui.UiHost.get().open(new com.musicplayer.ore.OreHomeScreen());
             }
             case "newUiEnabled" -> c.setNewUiEnabled(!c.isNewUiEnabled());
             case "showNowPlayingToast" -> c.setShowNowPlayingToast(!c.isShowNowPlayingToast());
@@ -1339,7 +1408,7 @@ public class MusicPlayerScreen extends Screen {
                 }
                 c.setThemeId(themes[(idx + 1) % themes.length]);
             }
-            case "musicFolder" -> {
+            case "musicFolder" -> runDialog(() -> {
                 String initial = c.getMusicFolderPath();
                 if (initial.isEmpty()) initial = System.getProperty("user.home");
                 SdlFileDialogs.selectFolder("Select music folder", initial, result -> {
@@ -1349,7 +1418,7 @@ public class MusicPlayerScreen extends Screen {
                         refreshSongList();
                     }
                 });
-            }
+            });
             case "listeningTime" -> {
                 setPanelMode(PanelMode.NONE);
                 minecraft.gui.setScreen(new ListeningStatsScreen(this));
@@ -1557,11 +1626,11 @@ public class MusicPlayerScreen extends Screen {
         }
         SongInfo song = manager.getCurrentSong();
         if (song == null) return;
-        SdlFileDialogs.openFile("Select album art PNG", initialDir, result -> {
+        runDialog(() -> SdlFileDialogs.openFile("Select album art PNG", initialDir, result -> {
             if (result != null && !result.isEmpty()) {
                 AlbumArtManager.getInstance().setCustomArt(song.getPath(), new File(result));
             }
-        });
+        }));
     }
 
     private void restoreSongListScroll() {
@@ -1728,10 +1797,9 @@ public class MusicPlayerScreen extends Screen {
                 }
                 int visH = clipBottom - clipTop;
                 if (totalH > visH) {
-                    if (mx >= sbX && mx <= sbX + 4 && my >= clipTop && my <= clipBottom) {
-                        float ratio = (float) (my - clipTop) / visH;
-                        settingsScrollY = -(int) (ratio * (totalH - visH));
-                        settingsScrollY = Math.max(-(totalH - visH), Math.min(0, settingsScrollY));
+                    if (mx >= sbX - 3 && mx <= sbX + 7 && my >= clipTop && my <= clipBottom) {
+                        draggingSettingsScrollbar = true;
+                        scrollSettingsTo(my, totalH, visH);
                         return true;
                     }
                 }
@@ -1810,12 +1878,29 @@ public class MusicPlayerScreen extends Screen {
         return false;
     }
 
+    /** Maps a mouse Y over the settings scrollbar track to a scroll offset, keeping the thumb centred on the cursor. */
+    private void scrollSettingsTo(double my, int totalH, int visH) {
+        int thumbH = Math.max(8, visH * visH / totalH);
+        int track = Math.max(1, visH - thumbH);
+        double frac = (my - (contentTop + 26) - thumbH / 2.0) / track;
+        frac = Math.max(0, Math.min(1, frac));
+        settingsScrollY = -(int) Math.round(frac * (totalH - visH));
+    }
+
     @Override
     public boolean mouseDragged(MouseButtonEvent event, double dragX, double dragY) {
         int button = event.button();
         double mx = event.x();
         double my = event.y();
         if (button == com.mojang.blaze3d.platform.InputConstants.MOUSE_BUTTON_LEFT) {
+            if (draggingSettingsScrollbar && panelMode == PanelMode.SETTINGS) {
+                int clipTop = contentTop + 26;
+                int visH = contentBottom - 10 - clipTop;
+                int totalH = 0;
+                for (Object[] s : buildSettingsList()) totalH += (s.length == 1 ? 18 : 22) + 1;
+                if (totalH > visH) scrollSettingsTo(my, totalH, visH);
+                return true;
+            }
             if (draggingSliderId != null && panelMode == PanelMode.SETTINGS) {
                 int x = middleLeft + 10;
                 int w = middleWidth - 20;
@@ -1845,14 +1930,17 @@ public class MusicPlayerScreen extends Screen {
     @Override
     public boolean mouseReleased(MouseButtonEvent event) {
         if (event.button() == com.mojang.blaze3d.platform.InputConstants.MOUSE_BUTTON_LEFT) {
-            if (isDraggingSidebar || isDraggingHero) {
+            boolean resized = isDraggingSidebar || isDraggingHero;
+            if (resized) {
                 MusicPlayerConfig cfg = manager.getConfig();
                 cfg.setSidebarWidth(sidebarW);
                 cfg.setHeroWidth(heroW);
             }
             draggingSliderId = null;
+            draggingSettingsScrollbar = false;
             isDraggingSidebar = false;
             isDraggingHero = false;
+            if (resized) relayoutNow();
         }
         if (getFocused() != null && getFocused() instanceof AbstractWidget aw) {
             if (aw.mouseReleased(event)) return true;

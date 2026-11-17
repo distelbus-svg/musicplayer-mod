@@ -27,6 +27,8 @@ public class MusicManagerMixin {
     private boolean wasSuppressing = false;
     private boolean wasPauseScreen = false;
     private boolean wasEnginePlaying = false;
+    private boolean pausedTracksForScreen = false;
+    private net.minecraft.client.resources.sounds.SoundInstance foreignPaused = null;
 
     @Inject(method = "tick", at = @At("HEAD"), cancellable = true)
     private void onTickHead(CallbackInfo ci) {
@@ -35,17 +37,13 @@ public class MusicManagerMixin {
 
             if (isPauseScreen) {
                 if (!wasPauseScreen) {
-                    // Pause screen just opened — pause mod-managed tracks and stop vanilla
+                    // Pause screen just opened: pause what Melodix and the game are playing (only if the setting is on)
                     SoundtrackStateManager ssm = SoundtrackStateManager.getInstance();
-                    ssm.pauseImmediate();
-                    if (this.currentMusic != null) {
-                        minecraft.getSoundManager().stop(this.currentMusic);
-                        this.currentMusic = null;
-                    }
-                    this.nextSongDelay = Integer.MAX_VALUE;
-                    // Pause AudioEngine for USER source if configured
                     MusicPlayerConfig cfg = MusicPlayerConfig.getInstance();
                     if (cfg.isPauseOnPauseScreen()) {
+                        // remember whether we paused something, so a song the person paused themselves stays paused
+                        pausedTracksForScreen = ssm.isManualPlaying() || (ssm.isAutoPlaying() && !ssm.isAutoPaused());
+                        ssm.pauseImmediate();
                         MusicPlayerManager mpm = MusicPlayerManager.getInstance();
                         if (mpm.getCurrentSource() == SongSource.USER) {
                             var eng = mpm.getEngine();
@@ -55,6 +53,17 @@ public class MusicManagerMixin {
                             }
                         }
                     }
+                    this.nextSongDelay = Integer.MAX_VALUE;
+                }
+                if (MusicPlayerConfig.getInstance().isPauseOnPauseScreen()) {
+                    SoundtrackStateManager ssm2 = SoundtrackStateManager.getInstance();
+                    ssm2.enforcePause();
+                    // the game's own track that Melodix doesn't track: pause it too
+                    if (this.currentMusic != null && this.currentMusic != ssm2.getAutoInstance()
+                            && !ssm2.isManualPlaying()) {
+                        ssm2.pauseForeign(this.currentMusic);
+                        foreignPaused = this.currentMusic;
+                    }
                 }
                 wasPauseScreen = true;
                 ci.cancel();
@@ -63,7 +72,14 @@ public class MusicManagerMixin {
 
             if (wasPauseScreen) {
                 // Pause screen just closed — resume mod-managed tracks
-                SoundtrackStateManager.getInstance().resumeImmediate();
+                if (foreignPaused != null) {
+                    SoundtrackStateManager.getInstance().resumeForeign(foreignPaused);
+                    foreignPaused = null;
+                }
+                if (pausedTracksForScreen) {
+                    pausedTracksForScreen = false;
+                    SoundtrackStateManager.getInstance().resumeImmediate();
+                }
                 // Resume AudioEngine for USER source if we paused it
                 if (wasEnginePlaying) {
                     wasEnginePlaying = false;
@@ -81,6 +97,15 @@ public class MusicManagerMixin {
             SoundtrackStateManager ssm = SoundtrackStateManager.getInstance();
             boolean isManual = ssm.isManualPlaying();
             boolean suppress = shouldSuppressAutoSchedule();
+
+            // "Mute Minecraft music" was switched on (or Melodix started) while the game's own track was already
+            // playing: stop it instead of letting it run to the end.
+            if (suppress && this.currentMusic != null
+                    && MusicPlayerManager.getInstance().getCurrentSource() == SongSource.USER) {
+                minecraft.getSoundManager().stop(this.currentMusic);
+                this.currentMusic = null;
+                ssm.clearAutoMusic();
+            }
 
             if (suppress) {
                 if (!wasSuppressing) {
@@ -108,6 +133,11 @@ public class MusicManagerMixin {
             SoundtrackStateManager ssm = SoundtrackStateManager.getInstance();
             if (!ssm.isManualPlaying() && this.currentMusic != null) {
                 ssm.captureAutoMusic(music, this.currentMusic);
+                // the game started a track by itself while Melodix is idle: show it in the player so it can be controlled
+                MusicPlayerManager mpm = MusicPlayerManager.getInstance();
+                if (mpm.getCurrentSource() == SongSource.USER && !mpm.getEngine().isActive()) {
+                    mpm.adoptAutoMusic();
+                }
                 if (music.sound().isBound()) {
                     MiniPlayerHud.triggerSlideIn();
                 }
@@ -127,11 +157,16 @@ public class MusicManagerMixin {
     }
 
     private static boolean shouldSuppressAutoSchedule() {
-        SongSource source = MusicPlayerManager.getInstance().getCurrentSource();
-        if (source == SongSource.USER) return true;
         SoundtrackStateManager ssm = SoundtrackStateManager.getInstance();
+        // A Minecraft song chosen in Melodix is playing or paused: the game must not start another on top of it.
         if (ssm.isManualPlaying() || ssm.isManualPaused()) return true;
-        if (ssm.isAutoPlaying() || ssm.isAutoPaused()) return true;
-        return false;
+
+        MusicPlayerManager mpm = MusicPlayerManager.getInstance();
+        if (mpm.getCurrentSource() == SongSource.USER) {
+            // Own songs: silence the game's music only when asked to, and only while Melodix is really playing.
+            // Otherwise the game's music plays by itself as usual.
+            return MusicPlayerConfig.getInstance().isSuppressVanillaMusic() && mpm.getEngine().isActive();
+        }
+        return ssm.isAutoPlaying() || ssm.isAutoPaused();
     }
 }

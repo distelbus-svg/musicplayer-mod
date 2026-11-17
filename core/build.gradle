@@ -1,0 +1,27 @@
+// Minecraft-free shared code. Compiled on its own (Java 17) to guarantee it never imports
+// Minecraft/Fabric; each version project also compiles these sources directly via srcDir.
+plugins {
+    id 'java-library'
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    compileOnly 'com.google.code.gson:gson:2.11.0'
+    compileOnly 'org.jcraft:jorbis:0.0.17'
+    implementation 'javazoom:jlayer:1.0.1'
+    implementation 'net.jthink:jaudiotagger:3.0.1'
+    implementation 'org.jflac:jflac-codec:1.5.2'
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.release = 17
+}
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(17)
+    }
+}

@@ -177,7 +177,8 @@ public class MusicSettingsScreen extends Screen {
             new SettingDef("playbackSpeed", "Speed", "Playback", "Playback speed multiplier (0.5x to 2.0x)", 0, 22, SettingType.CYCLE),
             new SettingDef("pauseOnOpen", "Pause Singleplayer", "Playback", "Pause the game in single-player when the music player is open", 0, 22, SettingType.TOGGLE),
             new SettingDef("pauseOnPauseScreen", "Pause Screen", "Playback", "Pause music when the game pause screen is open", 0, 22, SettingType.TOGGLE),
-            new SettingDef("stopWhenUnfocused", "Unfocused", "Playback", "Stop music when Minecraft isn't the active window", 0, 22, SettingType.TOGGLE)
+            new SettingDef("stopWhenUnfocused", "Unfocused", "Playback", "Stop music when Minecraft isn't the active window", 0, 22, SettingType.TOGGLE),
+            new SettingDef("continueInMenus", "Play in Menus", "Playback", "Keep music playing in the main menu and the world and server lists", 0, 22, SettingType.TOGGLE)
         ));
 
         y = addCategorySettings("Volume Control", y, List.of(
@@ -194,7 +195,9 @@ public class MusicSettingsScreen extends Screen {
             new SettingDef("visualizerEnabled", "Visualizer", "Display", "Show a live audio visualizer when music is playing", 0, 22, SettingType.TOGGLE),
             new SettingDef("miniPlayerEnabled", "Mini Player", "Display", "Show a movable mini player overlay with album art and controls", 0, 22, SettingType.TOGGLE),
             new SettingDef("miniPlayerStyle", "MP Style", "Display", "Mini player style: Big (current) or Compact", 0, 22, SettingType.CYCLE),
-            new SettingDef("themeSelector", "Theme", "Display", "Change the UI color theme", 0, 22, SettingType.CYCLE)
+            new SettingDef("themeSelector", "Theme", "Display", "Change the UI color theme", 0, 22, SettingType.CYCLE),
+            new SettingDef("oreUiEnabled", "OreUI", "Display", "Use the OreUI design (turn off for the older layouts)", 0, 22, SettingType.TOGGLE),
+            new SettingDef("newUiEnabled", "New UI", "Display", "Use the redesigned layout; turn off for the classic layout", 0, 22, SettingType.TOGGLE)
         ));
 
         y = addCategorySettings("Audio", y, List.of(
@@ -204,6 +207,9 @@ public class MusicSettingsScreen extends Screen {
 
         y = addCategorySettings("Effects", y, List.of(
             new SettingDef("eqEnabled", "Equalizer", "Effects", "Enable 5-band graphic equalizer", 0, 22, SettingType.TOGGLE),
+            new SettingDef("eqPreset", "Preset", "Effects", "Apply an equalizer preset (cycles through built-in and saved presets)", 0, 22, SettingType.CYCLE),
+            new SettingDef("eqSavePreset", "Save Preset", "Effects", "Save the current equalizer settings as a new preset", 0, 22, SettingType.ACTION),
+            new SettingDef("eqDeletePreset", "Delete Preset", "Effects", "Delete the active preset (saved presets only)", 0, 22, SettingType.ACTION),
             new SettingDef("preamp", "Preamp", "Effects", "Pre-amplification gain before EQ (0.5x – 2.0x)", 0, 22, SettingType.SLIDER_FLOAT),
             new SettingDef("eqBand0", "31Hz", "Effects", "EQ band 1: 31 Hz (Low bass)", 0, 22, SettingType.SLIDER_FLOAT),
             new SettingDef("eqBand1", "125Hz", "Effects", "EQ band 2: 125 Hz (Lower mid)", 0, 22, SettingType.SLIDER_FLOAT),
@@ -216,6 +222,8 @@ public class MusicSettingsScreen extends Screen {
 
         y = addCategorySettings("Extras", y, List.of(
             new SettingDef("listeningTime", "Listening Time", "Extras", "View listening time statistics per song", 0, 22, SettingType.ACTION),
+            new SettingDef("exportData", "Export Data", "Extras", "Save settings, EQ presets, playlists, listening statistics and music folder to one file", 0, 22, SettingType.ACTION),
+            new SettingDef("importData", "Import Data", "Extras", "Restore everything from an exported file (click twice to confirm)", 0, 22, SettingType.ACTION),
             new SettingDef("queuePersistence", "Save Queue", "Extras", "Save the current queue (song, position) across game restarts", 0, 22, SettingType.TOGGLE),
             new SettingDef("debugLogs", "Debug Logs", "Extras", "Enable detailed logging to debug issues", 0, 22, SettingType.TOGGLE)
         ));
@@ -274,10 +282,13 @@ public class MusicSettingsScreen extends Screen {
             case "pauseOnOpen" -> config.isPauseOnOpen();
             case "pauseOnPauseScreen" -> config.isPauseOnPauseScreen();
             case "stopWhenUnfocused" -> config.isStopWhenUnfocused();
+            case "continueInMenus" -> config.isContinueInMenus();
             case "visualizerEnabled" -> config.isVisualizerEnabled();
             case "miniPlayerEnabled" -> config.isMiniPlayerEnabled();
             case "debugLogs" -> config.isDebugLogsEnabled();
             case "queuePersistence" -> config.isQueuePersistence();
+            case "oreUiEnabled" -> config.isOreUiEnabled();
+            case "newUiEnabled" -> config.isNewUiEnabled();
             default -> false;
         };
         return val ? "ON" : "OFF";
@@ -293,10 +304,19 @@ public class MusicSettingsScreen extends Screen {
             case "pauseOnOpen" -> config.setPauseOnOpen(!config.isPauseOnOpen());
             case "pauseOnPauseScreen" -> config.setPauseOnPauseScreen(!config.isPauseOnPauseScreen());
             case "stopWhenUnfocused" -> config.setStopWhenUnfocused(!config.isStopWhenUnfocused());
+            case "continueInMenus" -> config.setContinueInMenus(!config.isContinueInMenus());
             case "visualizerEnabled" -> config.setVisualizerEnabled(!config.isVisualizerEnabled());
             case "miniPlayerEnabled" -> config.setMiniPlayerEnabled(!config.isMiniPlayerEnabled());
             case "debugLogs" -> config.setDebugLogsEnabled(!config.isDebugLogsEnabled());
             case "queuePersistence" -> config.setQueuePersistence(!config.isQueuePersistence());
+            case "oreUiEnabled" -> {
+                config.setOreUiEnabled(!config.isOreUiEnabled());
+                if (config.isOreUiEnabled()) com.musicplayer.ui.UiHost.get().open(new com.musicplayer.ore.OreHomeScreen());
+            }
+            case "newUiEnabled" -> {
+                config.setNewUiEnabled(!config.isNewUiEnabled());
+                if (config.isNewUiEnabled() && !config.isOreUiEnabled()) this.minecraft.gui.setScreen(new MusicPlayerScreen());
+            }
         }
     }
 
@@ -307,6 +327,7 @@ public class MusicSettingsScreen extends Screen {
             case "nowPlayingStyle" -> config.getNowPlayingStyle().name();
             case "miniPlayerStyle" -> config.getMiniPlayerStyle() == MusicPlayerConfig.MiniPlayerStyle.BIG ? "Big" : "Compact";
             case "themeSelector" -> com.musicplayer.theme.ColorTheme.get(config.getThemeId()).name();
+            case "eqPreset" -> presetCycleText();
             default -> "";
         };
     }
@@ -334,6 +355,15 @@ public class MusicSettingsScreen extends Screen {
                 var vals = MusicPlayerConfig.MiniPlayerStyle.values();
                 config.setMiniPlayerStyle(vals[(config.getMiniPlayerStyle().ordinal() + 1) % vals.length]);
             }
+            case "eqPreset" -> {
+                var all = EqPresetManager.all();
+                String cur = EqPresetManager.currentName();
+                int idx = -1;
+                for (int i = 0; i < all.size(); i++) {
+                    if (all.get(i).name().equals(cur)) { idx = i; break; }
+                }
+                EqPresetManager.apply(all.get((idx + 1) % all.size()));
+            }
             case "themeSelector" -> {
                 var themes = com.musicplayer.theme.ColorTheme.all().keySet().toArray(new String[0]);
                 String cur = config.getThemeId();
@@ -344,6 +374,97 @@ public class MusicSettingsScreen extends Screen {
                 config.setThemeId(themes[(idx + 1) % themes.length]);
             }
         }
+    }
+
+    // ─── EQ presets and data export / import ───
+
+    private java.nio.file.Path pendingImport;
+    private long importConfirmUntil;
+
+    private String presetCycleText() {
+        String n = EqPresetManager.currentName();
+        if (n == null) return "Custom";
+        return n.length() > 9 ? n.substring(0, 8) + ".." : n;
+    }
+
+    private String actionText(String id) {
+        return switch (id) {
+            case "eqSavePreset" -> "Save";
+            case "eqDeletePreset" -> "Delete";
+            case "exportData" -> "Export";
+            case "importData" -> pendingImport != null && System.currentTimeMillis() < importConfirmUntil ? "Confirm" : "Import";
+            default -> "Open \u2192";
+        };
+    }
+
+    private void toast(String msg) {
+        com.musicplayer.hud.NotificationManager.showSystem(msg);
+    }
+
+    private void runAction(String id) {
+        switch (id) {
+            case "listeningTime" -> this.minecraft.gui.setScreen(new ListeningStatsScreen(this));
+            case "eqSavePreset" -> {
+                String name = EqPresetManager.suggestName();
+                EqPresetManager.saveCurrent(name);
+                toast("Saved EQ preset \"" + name + "\"");
+            }
+            case "eqDeletePreset" -> {
+                EqPresetManager.Preset p = EqPresetManager.find(EqPresetManager.currentName());
+                if (p != null && !p.builtIn() && EqPresetManager.delete(p.name())) toast("Deleted EQ preset \"" + p.name() + "\"");
+                else toast("Select a saved preset first");
+            }
+            case "exportData" -> exportData();
+            case "importData" -> importData();
+            default -> { }
+        }
+    }
+
+    private void exportData() {
+        if (this.minecraft.options.fullscreen().get()) {
+            toast("Exit fullscreen to use the file browser");
+            return;
+        }
+        String initial = java.nio.file.Path.of(System.getProperty("user.home"), DataExporter.defaultFileName()).toString();
+        SdlFileDialogs.saveFile("Export Melodix data", initial, result -> {
+            if (result == null || result.isEmpty()) return;
+            this.minecraft.execute(() -> {
+                try {
+                    java.nio.file.Path out = DataExporter.withExtension(java.nio.file.Path.of(result));
+                    DataExporter.export(out);
+                    toast("Exported data to " + out.getFileName());
+                } catch (Exception e) {
+                    toast("Export failed: " + e.getMessage());
+                }
+            });
+        });
+    }
+
+    private void importData() {
+        if (pendingImport != null && System.currentTimeMillis() < importConfirmUntil) {
+            java.nio.file.Path p = pendingImport;
+            pendingImport = null;
+            try {
+                DataExporter.Result r = DataExporter.importFrom(p);
+                toast(r.describe());
+                if (r.musicFolderMissing) toast("Music folder not found on this device. Choose it again under Library.");
+            } catch (Exception e) {
+                toast("Import failed: " + e.getMessage());
+            }
+            return;
+        }
+        if (this.minecraft.options.fullscreen().get()) {
+            toast("Exit fullscreen to use the file browser");
+            return;
+        }
+        SdlFileDialogs.openFile("Import Melodix data", System.getProperty("user.home"), result -> {
+            if (result == null || result.isEmpty()) return;
+            this.minecraft.execute(() -> {
+                pendingImport = java.nio.file.Path.of(result);
+                importConfirmUntil = System.currentTimeMillis() + 8000;
+                toast("Click Import again within 8 seconds to replace your data with " + pendingImport.getFileName());
+            });
+        });
     }
 
     private float getSliderFloat(String id) {
@@ -498,7 +619,7 @@ public class MusicSettingsScreen extends Screen {
                 String btnText = switch (def.type()) {
                     case TOGGLE -> getToggleText(def.id());
                     case CYCLE -> getCycleText(def.id());
-                    case ACTION -> "Open \u2192";
+                    case ACTION -> actionText(def.id());
                     default -> "";
                 };
                 graphics.centeredText(this.font, btnText, bx + bw / 2, sy + 4, 0xFFFFFFFF);
@@ -691,7 +812,7 @@ public class MusicSettingsScreen extends Screen {
                     switch (def.type()) {
                         case TOGGLE -> toggleSetting(def.id());
                         case CYCLE -> cycleSetting(def.id());
-                        case ACTION -> this.minecraft.gui.setScreen(new ListeningStatsScreen(this));
+                        case ACTION -> runAction(def.id());
                         default -> {}
                     }
                     return true;
